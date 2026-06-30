@@ -320,12 +320,17 @@ def cmd_monitor(args):
                             "details": variants[0].get("details", "")
                         })
 
-            # Check Canceled/Delayed Departures
+            # Check Canceled/Delayed Departures (queried generally and filtered locally)
             dep_url = f"{TRANSPORT_API_URL}/sites/{site_id}/departures"
             dep_data = make_request(dep_url, {
-                "line": site.get("lines"),
                 "transport": site.get("transport_modes")
             })
+            if dep_data and site.get("lines"):
+                line_strs = [str(l) for l in site.get("lines")]
+                dep_data["departures"] = [
+                    d for d in dep_data.get("departures", [])
+                    if d.get("line", {}).get("designation") in line_strs
+                ]
             if dep_data:
                 for dep in dep_data.get("departures", []):
                     state = dep.get("state", "")
@@ -351,9 +356,15 @@ def cmd_monitor(args):
                 from_name = from_site.get("name")
                 lines = leg.get("lines", [])
 
-                # Fetch departures for boarding stop
+                # Fetch departures for boarding stop (queried generally and filtered locally to avoid Bad Request with multiple lines)
                 dep_url = f"{TRANSPORT_API_URL}/sites/{from_id}/departures"
-                dep_data = make_request(dep_url, {"line": lines})
+                dep_data = make_request(dep_url)
+                if dep_data and lines:
+                    line_strs = [str(l) for l in lines]
+                    dep_data["departures"] = [
+                        d for d in dep_data.get("departures", [])
+                        if d.get("line", {}).get("designation") in line_strs
+                    ]
                 
                 valid_deps = []
                 if dep_data:
