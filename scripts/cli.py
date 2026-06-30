@@ -178,30 +178,8 @@ def cmd_deviations(args):
             sys.stdout.write(f"Details: {details}\n")
 
 
-def cmd_favorite_list(args):
-    """List current favorites."""
-    prefs = load_prefs(args.preferences)
-    stops = prefs.get("favourite_stops", [])
-    routes = prefs.get("favourite_routes", [])
-
-    sys.stdout.write("Favorite Sites:\n")
-    if not stops:
-        sys.stdout.write("  None\n")
-    else:
-        for s in stops:
-            lines = f" (Lines: {', '.join(s['lines'])})" if "lines" in s else ""
-            sys.stdout.write(f"  - {s['id']}: {s['name']}{lines}\n")
-
-    sys.stdout.write("\nFavorite Routes:\n")
-    if not routes:
-        sys.stdout.write("  None\n")
-    else:
-        for r in routes:
-            sys.stdout.write(f"  - {r['name']} ({len(r.get('legs', []))} legs)\n")
-
-
-def cmd_favorite_site_add(args):
-    """Add/Update favorite site."""
+def cmd_site_save(args):
+    """Save favorite site."""
     prefs = load_prefs(args.preferences)
     stops = prefs.get("favourite_stops", [])
     site_id = int(args.site_id)
@@ -221,7 +199,7 @@ def cmd_favorite_site_add(args):
     sys.stdout.write(f"Successfully added favorite site: {args.name} ({site_id})\n")
 
 
-def cmd_favorite_site_remove(args):
+def cmd_site_remove(args):
     """Remove favorite site."""
     prefs = load_prefs(args.preferences)
     stops = prefs.get("favourite_stops", [])
@@ -237,8 +215,8 @@ def cmd_favorite_site_remove(args):
     sys.stdout.write(f"Successfully removed favorite site: {site_id}\n")
 
 
-def cmd_favorite_route_add(args):
-    """Add/Update favorite route."""
+def cmd_route_save(args):
+    """Save favorite route."""
     prefs = load_prefs(args.preferences)
     routes = prefs.get("favourite_routes", [])
 
@@ -261,7 +239,7 @@ def cmd_favorite_route_add(args):
     sys.stdout.write(f"Successfully added favorite route: {args.name}\n")
 
 
-def cmd_favorite_route_remove(args):
+def cmd_route_remove(args):
     """Remove favorite route."""
     prefs = load_prefs(args.preferences)
     routes = prefs.get("favourite_routes", [])
@@ -292,149 +270,214 @@ def parse_time(time_str):
         return None
 
 
-def cmd_monitor(args):
-    """Autonomous monitor: evaluates deviations and schedules for favourites."""
+def check_single_site(site_id, site_name, transport_modes, lines, verbose=False):
+    """Check departures and deviations for a single site and return issues."""
+    warnings = []
+
+    # 1. Check Deviations
+    dev_url = f"{DEVIATIONS_API_URL}/messages"
+    devs = make_request(dev_url, {"future": False, "site": site_id})
+    if devs:
+        for dev in devs:
+            variants = dev.get("message_variants", [])
+            if variants:
+                warnings.append({
+                    "type": "SITE_DISRUPTION",
+                    "message": f"Disruption at {site_name}: {variants[0]['header']}",
+                    "details": variants[0].get("details", "")
+                })
+
+    # 2. Check Canceled/Delayed Departures
+    dep_url = f"{TRANSPORT_API_URL}/sites/{site_id}/departures"
+    dep_data = make_request(dep_url, {
+        "transport": transport_modes
+    })
+    if dep_data and lines:
+        line_strs = [str(l) for l in lines]
+        dep_data["departures"] = [
+            d for d in dep_data.get("departures", [])
+            if d.get("line", {}).get("designation") in line_strs
+        ]
+    if dep_data:
+        for dep in dep_data.get("departures", []):
+            state = dep.get("state", "")
+            line = dep.get("line", {}).get("designation", "")
+            dest = dep.get("destination", "")
+            if state == "CANCELLED":
+                warnings.append({
+                    "type": "CANCELLED_DEPARTURE",
+                    "message": f"Canceled: Line {line} to {dest} at {site_name}"
+                })
+    return warnings
+
+
+def cmd_site_check(args):
+    """Check departures and active disruptions for one or all favorite sites."""
     prefs = load_prefs(args.preferences)
     stops = prefs.get("favourite_stops", [])
+
+    warnings = []
+
+    if args.site_id:
+        site_id = int(args.site_id)
+        site_name = f"Site {site_id}"
+        transport_modes = None
+        lines = None
+
+        # Try to resolve details from favorites
+        for s in stops:
+            if s.get("id") == site_id:
+                site_name = s.get("name", site_name)
+                transport_modes = s.get("transport_modes")
+                lines = s.get("lines")
+                break
+
+        sys.stdout.write(f"Checking site {site_name}...\n")
+        warnings.extend(check_single_site(site_id, site_name, transport_modes, lines, args.verbose))
+    else:
+        if not stops:
+            sys.stdout.write("No favorite sites configured to check.\n")
+            return
+
+        sys.stdout.write("Checking all favorite sites...\n")
+        for s in stops:
+            site_id = s["id"]
+            site_name = s["name"]
+            transport_modes = s.get("transport_modes")
+            lines = s.get("lines")
+            warnings.extend(check_single_site(site_id, site_name, transport_modes, lines, args.verbose))
+
+    # Output Warnings
+    if not warnings:
+        sys.stdout.write("Status: OK. No disruptions or cancelled departures detected.\n")
+        return
+
+    sys.stdout.write(f"Status: WARNING. Detected {len(warnings)} issues:\n")
+    for w in warnings:
+        sys.stdout.write(f"- [{w['type']}] {w['message']}\n")
+        if args.verbose and w.get("details"):
+            sys.stdout.write(f"  Details: {w['details']}\n")
+
+
+def check_single_route(route, warnings):
+    """Check departures and deviations for a single route."""
+    route_name = route["name"]
+    legs = route.get("legs", [])
+    leg_departures = []
+
+    for i, leg in enumerate(legs):
+        from_site = leg.get("from", {})
+        from_id = from_site.get("id")
+        from_name = from_site.get("name")
+        lines = leg.get("lines", [])
+
+        # Fetch departures for boarding stop
+        dep_url = f"{TRANSPORT_API_URL}/sites/{from_id}/departures"
+        dep_data = make_request(dep_url)
+        if dep_data and lines:
+            line_strs = [str(l) for l in lines]
+            dep_data["departures"] = [
+                d for d in dep_data.get("departures", [])
+                if d.get("line", {}).get("designation") in line_strs
+            ]
+
+        valid_deps = []
+        if dep_data:
+            for dep in dep_data.get("departures", []):
+                if dep.get("state") != "CANCELLED":
+                    valid_deps.append(dep)
+
+        leg_departures.append(valid_deps)
+
+        # Fetch deviations affecting this leg (site or line)
+        dev_url = f"{DEVIATIONS_API_URL}/messages"
+        for line_id in lines:
+            devs = make_request(dev_url, {"future": False, "line": line_id})
+            if devs:
+                for dev in devs:
+                    # Apply strict deviation assessment: ignore if localized to an unused stop point
+                    stop_areas = dev.get("scope", {}).get("stop_areas", [])
+                    affected_stop_ids = [sa.get("id") for sa in stop_areas if sa.get("id")]
+
+                    # If deviation is stop-specific and doesn't match our start/end site, skip
+                    if affected_stop_ids and from_id not in affected_stop_ids:
+                        continue
+
+                    variants = dev.get("message_variants", [])
+                    if variants:
+                        warnings.append({
+                            "type": "ROUTE_DISRUPTION",
+                            "message": f"Route '{route_name}' Leg {i+1} (Line {line_id}): {variants[0]['header']}",
+                            "details": variants[0].get("details", "")
+                        })
+
+    # Evaluate Connections between sequential legs
+    for i in range(len(legs) - 1):
+        leg1 = legs[i]
+        leg2 = legs[i+1]
+        travel_time = leg1.get("travel_time_minutes")
+
+        if not travel_time:
+            continue
+
+        # Look for connecting departure pairs
+        deps1 = leg_departures[i]
+        deps2 = leg_departures[i+1]
+
+        for d1 in deps1[:3]: # check top 3 upcoming
+            d1_time = parse_time(d1.get("expected") or d1.get("scheduled"))
+            if not d1_time:
+                continue
+
+            arrival_time = d1_time + timedelta(minutes=travel_time)
+
+            # Find the first departure on leg 2 after arrival
+            matching_d2 = None
+            for d2 in deps2:
+                d2_time = parse_time(d2.get("expected") or d2.get("scheduled"))
+                if d2_time and d2_time >= arrival_time:
+                    matching_d2 = d2
+                    break
+
+            if matching_d2:
+                d2_time = parse_time(matching_d2.get("expected") or matching_d2.get("scheduled"))
+                buffer = (d2_time - arrival_time).total_seconds() / 60
+                if buffer < 5.0:
+                    line1 = d1.get("line", {}).get("designation", "")
+                    line2 = matching_d2.get("line", {}).get("designation", "")
+                    warnings.append({
+                        "type": "TIGHT_CONNECTION",
+                        "message": f"Tight Connection warning on '{route_name}': Leg {i+1} ({line1} expected arrival {arrival_time.strftime('%H:%M')}) to Leg {i+2} ({line2} departure {d2_time.strftime('%H:%M')}) has only {int(buffer)} min buffer (min required: 5 min)."
+                    })
+
+
+def cmd_route_check(args):
+    """Check departures and connection safety buffer for one or all favorite routes."""
+    prefs = load_prefs(args.preferences)
     routes = prefs.get("favourite_routes", [])
 
     warnings = []
 
-    # 1. Check Favorite Sites
-    if stops:
-        sys.stdout.write("Checking favorite sites...\n")
-        for site in stops:
-            site_id = site["id"]
-            site_name = site["name"]
+    if args.alias:
+        target = None
+        for r in routes:
+            if r.get("name") == args.alias:
+                target = r
+                break
+        if not target:
+            sys.stderr.write(f"Route '{args.alias}' not found in favorites.\n")
+            sys.exit(1)
 
-            # Check Deviations
-            dev_url = f"{DEVIATIONS_API_URL}/messages"
-            devs = make_request(dev_url, {"future": False, "site": site_id})
-            if devs:
-                for dev in devs:
-                    variants = dev.get("message_variants", [])
-                    if variants:
-                        warnings.append({
-                            "type": "SITE_DISRUPTION",
-                            "message": f"Disruption at {site_name}: {variants[0]['header']}",
-                            "details": variants[0].get("details", "")
-                        })
+        sys.stdout.write(f"Checking route '{args.alias}'...\n")
+        check_single_route(target, warnings)
+    else:
+        if not routes:
+            sys.stdout.write("No favorite routes configured to check.\n")
+            return
 
-            # Check Canceled/Delayed Departures (queried generally and filtered locally)
-            dep_url = f"{TRANSPORT_API_URL}/sites/{site_id}/departures"
-            dep_data = make_request(dep_url, {
-                "transport": site.get("transport_modes")
-            })
-            if dep_data and site.get("lines"):
-                line_strs = [str(l) for l in site.get("lines")]
-                dep_data["departures"] = [
-                    d for d in dep_data.get("departures", [])
-                    if d.get("line", {}).get("designation") in line_strs
-                ]
-            if dep_data:
-                for dep in dep_data.get("departures", []):
-                    state = dep.get("state", "")
-                    line = dep.get("line", {}).get("designation", "")
-                    dest = dep.get("destination", "")
-                    if state == "CANCELLED":
-                        warnings.append({
-                            "type": "CANCELLED_DEPARTURE",
-                            "message": f"Canceled: Line {line} to {dest} at {site_name}"
-                        })
-
-    # 2. Check Favorite Routes (Multi-leg check)
-    if routes:
-        sys.stdout.write("Checking favorite routes...\n")
-        for route in routes:
-            route_name = route["name"]
-            legs = route.get("legs", [])
-            leg_departures = []
-
-            for i, leg in enumerate(legs):
-                from_site = leg.get("from", {})
-                from_id = from_site.get("id")
-                from_name = from_site.get("name")
-                lines = leg.get("lines", [])
-
-                # Fetch departures for boarding stop (queried generally and filtered locally to avoid Bad Request with multiple lines)
-                dep_url = f"{TRANSPORT_API_URL}/sites/{from_id}/departures"
-                dep_data = make_request(dep_url)
-                if dep_data and lines:
-                    line_strs = [str(l) for l in lines]
-                    dep_data["departures"] = [
-                        d for d in dep_data.get("departures", [])
-                        if d.get("line", {}).get("designation") in line_strs
-                    ]
-                
-                valid_deps = []
-                if dep_data:
-                    for dep in dep_data.get("departures", []):
-                        if dep.get("state") != "CANCELLED":
-                            valid_deps.append(dep)
-                
-                leg_departures.append(valid_deps)
-
-                # Fetch deviations affecting this leg (site or line)
-                dev_url = f"{DEVIATIONS_API_URL}/messages"
-                for line_id in lines:
-                    devs = make_request(dev_url, {"future": False, "line": line_id})
-                    if devs:
-                        for dev in devs:
-                            # Apply strict deviation assessment: ignore if localized to an unused stop point
-                            stop_areas = dev.get("scope", {}).get("stop_areas", [])
-                            affected_stop_ids = [sa.get("id") for sa in stop_areas if sa.get("id")]
-                            
-                            # If deviation is stop-specific and doesn't match our start/end site, skip
-                            if affected_stop_ids and from_id not in affected_stop_ids:
-                                continue
-                            
-                            variants = dev.get("message_variants", [])
-                            if variants:
-                                warnings.append({
-                                    "type": "ROUTE_DISRUPTION",
-                                    "message": f"Route '{route_name}' Leg {i+1} (Line {line_id}): {variants[0]['header']}",
-                                    "details": variants[0].get("details", "")
-                                })
-
-            # Evaluate Connections between sequential legs
-            for i in range(len(legs) - 1):
-                leg1 = legs[i]
-                leg2 = legs[i+1]
-                travel_time = leg1.get("travel_time_minutes")
-
-                if not travel_time:
-                    # Skip connection verification if travel_time_minutes is not defined
-                    continue
-
-                # Look for connecting departure pairs
-                deps1 = leg_departures[i]
-                deps2 = leg_departures[i+1]
-
-                for d1 in deps1[:3]: # check top 3 upcoming
-                    d1_time = parse_time(d1.get("expected") or d1.get("scheduled"))
-                    if not d1_time:
-                        continue
-                    
-                    arrival_time = d1_time + timedelta(minutes=travel_time)
-
-                    # Find the first departure on leg 2 after arrival
-                    matching_d2 = None
-                    for d2 in deps2:
-                        d2_time = parse_time(d2.get("expected") or d2.get("scheduled"))
-                        if d2_time and d2_time >= arrival_time:
-                            matching_d2 = d2
-                            break
-                    
-                    if matching_d2:
-                        d2_time = parse_time(matching_d2.get("expected") or matching_d2.get("scheduled"))
-                        buffer = (d2_time - arrival_time).total_seconds() / 60
-                        if buffer < 5.0:
-                            line1 = d1.get("line", {}).get("designation", "")
-                            line2 = matching_d2.get("line", {}).get("designation", "")
-                            warnings.append({
-                                "type": "TIGHT_CONNECTION",
-                                "message": f"Tight Connection warning on '{route_name}': Leg {i+1} ({line1} expected arrival {arrival_time.strftime('%H:%M')}) to Leg {i+2} ({line2} departure {d2_time.strftime('%H:%M')}) has only {int(buffer)} min buffer (min required: 5 min)."
-                            })
+        sys.stdout.write("Checking all favorite routes...\n")
+        for r in routes:
+            check_single_route(r, warnings)
 
     # Output Warnings
     if not warnings:
@@ -444,6 +487,8 @@ def cmd_monitor(args):
     sys.stdout.write(f"Status: WARNING. Detected {len(warnings)} issues:\n")
     for w in warnings:
         sys.stdout.write(f"- [{w['type']}] {w['message']}\n")
+        if args.verbose and w.get("details"):
+            sys.stdout.write(f"  Details: {w['details']}\n")
 
 
 # =====================================================================
@@ -454,80 +499,101 @@ def main():
     parser = argparse.ArgumentParser(description="SL Trafiklab CLI Tool")
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
 
+    # site namespace
+    p_site = subparsers.add_parser("site", help="Site operations")
+    site_sub = p_site.add_subparsers(dest="subcommand", help="Site subcommands")
+
     # site list
-    p_site_list = subparsers.add_parser("site", help="Site operations")
-    s_sub = p_site_list.add_subparsers(dest="subcommand", help="Site subcommands")
-    
-    p_list = s_sub.add_parser("list", help="Search/List sites")
+    p_list = site_sub.add_parser("list", help="Search/List sites")
     p_list.add_argument("query", help="Search string for stop names")
     p_list.add_argument("--limit", type=int, default=10, help="Maximum search results")
 
     # site departures
-    p_dep = s_sub.add_parser("departures", help="Fetch departures for a site")
+    p_dep = site_sub.add_parser("departures", help="Fetch departures for a site")
     p_dep.add_argument("site_id", help="Numeric Site ID")
     p_dep.add_argument("--line", help="Filter by line designation")
     p_dep.add_argument("--transport", help="Filter by transport mode (BUS, METRO, TRAIN, etc.)")
     p_dep.add_argument("--direction", type=int, choices=[1, 2], help="Filter by direction code")
     p_dep.add_argument("--forecast", type=int, help="Forecast window in minutes")
 
-    # deviations
+    # site check
+    p_site_chk = site_sub.add_parser("check", help="Check departures and disruptions for one or all favorite sites")
+    p_site_chk.add_argument("site_id", nargs="?", help="Optional numeric Site ID to check a single station")
+    p_site_chk.add_argument("--preferences", help="Override preferences file path")
+    p_site_chk.add_argument("-v", "--verbose", action="store_true", help="Print details of deviations")
+
+    # site save
+    p_site_save = site_sub.add_parser("save", help="Save favorite site")
+    p_site_save.add_argument("site_id", help="Numeric Site ID")
+    p_site_save.add_argument("name", help="Display name for favorite site")
+    p_site_save.add_argument("--lines", help="Comma-separated line filters")
+    p_site_save.add_argument("--modes", help="Comma-separated transport mode filters")
+    p_site_save.add_argument("--preferences", help="Override preferences file path")
+
+    # site remove
+    p_site_rem = site_sub.add_parser("remove", help="Remove favorite site")
+    p_site_rem.add_argument("site_id", help="Site ID to remove")
+    p_site_rem.add_argument("--preferences", help="Override preferences file path")
+
+    # deviations namespace
     p_dev = subparsers.add_parser("deviations", help="Fetch transit deviations")
     p_dev.add_argument("--site", help="Filter by Site ID")
     p_dev.add_argument("--line", help="Filter by line designation")
     p_dev.add_argument("--future", type=bool, default=False, help="Show planned/future deviations")
     p_dev.add_argument("-v", "--verbose", action="store_true", help="Print deviation details")
 
-    # favorite
-    p_fav = subparsers.add_parser("favorite", help="Favorite preference management")
-    p_fav.add_argument("--preferences", help="Override preferences file path")
-    fav_sub = p_fav.add_subparsers(dest="subcommand", help="Favorite subcommands")
+    # route namespace
+    p_route = subparsers.add_parser("route", help="Route operations")
+    route_sub = p_route.add_subparsers(dest="subcommand", help="Route subcommands")
 
-    fav_sub.add_parser("list", help="List favorites")
+    # route check
+    p_route_chk = route_sub.add_parser("check", help="Check departures and connection safety buffers for one or all routes")
+    p_route_chk.add_argument("alias", nargs="?", help="Optional Route alias to check a single route")
+    p_route_chk.add_argument("--preferences", help="Override preferences file path")
+    p_route_chk.add_argument("-v", "--verbose", action="store_true", help="Print details of disruptions")
 
-    p_fav_add_site = fav_sub.add_parser("site-add", help="Add favorite site")
-    p_fav_add_site.add_argument("site_id", help="Numeric Site ID")
-    p_fav_add_site.add_argument("name", help="Display name for favorite site")
-    p_fav_add_site.add_argument("--lines", help="Comma-separated line filters")
-    p_fav_add_site.add_argument("--modes", help="Comma-separated transport mode filters")
+    # route save
+    p_route_save = route_sub.add_parser("save", help="Save favorite route")
+    p_route_save.add_argument("name", help="Route alias name")
+    p_route_save.add_argument("legs_json", help="JSON array of route legs")
+    p_route_save.add_argument("--preferences", help="Override preferences file path")
 
-    p_fav_rem_site = fav_sub.add_parser("site-remove", help="Remove favorite site")
-    p_fav_rem_site.add_argument("site_id", help="Site ID to remove")
-
-    p_fav_add_route = fav_sub.add_parser("route-add", help="Add favorite route")
-    p_fav_add_route.add_argument("name", help="Route name")
-    p_fav_add_route.add_argument("legs_json", help="JSON array of route legs")
-
-    p_fav_rem_route = fav_sub.add_parser("route-remove", help="Remove favorite route")
-    p_fav_rem_route.add_argument("name", help="Route name to remove")
-
-    # monitor
-    p_mon = subparsers.add_parser("monitor", help="Run autonomous monitor checks")
-    p_mon.add_argument("--preferences", help="Override preferences file path")
+    # route remove
+    p_route_rem = route_sub.add_parser("remove", help="Remove favorite route")
+    p_route_rem.add_argument("name", help="Route alias to remove")
+    p_route_rem.add_argument("--preferences", help="Override preferences file path")
 
     args = parser.parse_args()
 
     # Routing
-    if args.command == "site" and args.subcommand == "list":
-        cmd_site_list(args)
-    elif args.command == "site" and args.subcommand == "departures":
-        cmd_site_departures(args)
+    if args.command == "site":
+        if args.subcommand == "list":
+            cmd_site_list(args)
+        elif args.subcommand == "departures":
+            cmd_site_departures(args)
+        elif args.subcommand == "check":
+            cmd_site_check(args)
+        elif args.subcommand == "save":
+            cmd_site_save(args)
+        elif args.subcommand == "remove":
+            cmd_site_remove(args)
+        else:
+            p_site.print_help()
+    elif args.command == "route":
+        if args.subcommand == "check":
+            cmd_route_check(args)
+        elif args.subcommand == "save":
+            cmd_route_save(args)
+        elif args.subcommand == "remove":
+            cmd_route_remove(args)
+        else:
+            p_route.print_help()
     elif args.command == "deviations":
         cmd_deviations(args)
-    elif args.command == "favorite" and args.subcommand == "list":
-        cmd_favorite_list(args)
-    elif args.command == "favorite" and args.subcommand == "site-add":
-        cmd_favorite_site_add(args)
-    elif args.command == "favorite" and args.subcommand == "site-remove":
-        cmd_favorite_site_remove(args)
-    elif args.command == "favorite" and args.subcommand == "route-add":
-        cmd_favorite_route_add(args)
-    elif args.command == "favorite" and args.subcommand == "route-remove":
-        cmd_favorite_route_remove(args)
-    elif args.command == "monitor":
-        cmd_monitor(args)
     else:
         parser.print_help()
 
 
 if __name__ == "__main__":
     main()
+

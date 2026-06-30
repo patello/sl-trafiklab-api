@@ -34,7 +34,7 @@ def test_save_and_load_prefs(prefs_path):
     assert loaded["favourite_stops"][0]["name"] == "Test Site"
 
 
-def test_add_favorite_site(prefs_path):
+def test_save_site_to_favorites(prefs_path):
     """Should add a site to favorites."""
     args = MagicMock()
     args.preferences = prefs_path
@@ -43,7 +43,7 @@ def test_add_favorite_site(prefs_path):
     args.lines = "10,20"
     args.modes = "bus,metro"
 
-    cli.cmd_favorite_site_add(args)
+    cli.cmd_site_save(args)
     prefs = cli.load_prefs(prefs_path)
     assert len(prefs["favourite_stops"]) == 1
     
@@ -54,7 +54,7 @@ def test_add_favorite_site(prefs_path):
     assert stop["transport_modes"] == ["BUS", "METRO"]
 
 
-def test_remove_favorite_site(prefs_path):
+def test_remove_site_from_favorites(prefs_path):
     """Should remove a site from favorites."""
     prefs = {
         "favourite_stops": [{"id": 1234, "name": "Stop A"}],
@@ -66,13 +66,67 @@ def test_remove_favorite_site(prefs_path):
     args.preferences = prefs_path
     args.site_id = "1234"
 
-    cli.cmd_favorite_site_remove(args)
+    cli.cmd_site_remove(args)
     prefs = cli.load_prefs(prefs_path)
     assert len(prefs["favourite_stops"]) == 0
 
 
 @patch('scripts.cli.make_request')
-def test_monitor_tight_connection_warning(mock_make_request, prefs_path):
+def test_site_check_single_and_all(mock_make_request, prefs_path):
+    """Should fetch status for one or all stops."""
+    prefs = {
+        "favourite_stops": [
+            {"id": 1111, "name": "Stop One", "lines": ["10"], "transport_modes": ["BUS"]},
+            {"id": 2222, "name": "Stop Two"}
+        ],
+        "favourite_routes": []
+    }
+    cli.save_prefs(prefs, prefs_path)
+
+    def mock_api(url, params=None):
+        if "messages" in url:
+            return [{
+                "id": "D1",
+                "message_variants": [{"header": "Disruption here"}]
+            }]
+        elif "departures" in url:
+            return {
+                "departures": [{
+                    "line": {"designation": "10"},
+                    "destination": "Destination",
+                    "scheduled": "2026-06-30T12:00:00",
+                    "expected": "2026-06-30T12:00:00",
+                    "state": "CANCELLED"
+                }]
+            }
+        return {}
+
+    mock_make_request.side_effect = mock_api
+
+    # 1. Check all stops
+    args = MagicMock()
+    args.preferences = prefs_path
+    args.site_id = None
+    args.verbose = True
+
+    with patch('sys.stdout.write') as mock_stdout:
+        cli.cmd_site_check(args)
+        written_calls = "".join(call[0][0] for call in mock_stdout.call_args_list)
+        assert "Checking all favorite sites..." in written_calls
+        assert "Status: WARNING" in written_calls
+        assert "Disruption at Stop One" in written_calls
+        assert "Canceled: Line 10 to Destination" in written_calls
+
+    # 2. Check single stop
+    args.site_id = "2222"
+    with patch('sys.stdout.write') as mock_stdout:
+        cli.cmd_site_check(args)
+        written_calls = "".join(call[0][0] for call in mock_stdout.call_args_list)
+        assert "Checking site Stop Two..." in written_calls
+
+
+@patch('scripts.cli.make_request')
+def test_route_check_tight_connection_warning(mock_make_request, prefs_path):
     """Should raise tight connection warning if buffer < 5 minutes."""
     route = {
         "name": "Commute Route",
@@ -123,9 +177,11 @@ def test_monitor_tight_connection_warning(mock_make_request, prefs_path):
 
     args = MagicMock()
     args.preferences = prefs_path
+    args.alias = None
+    args.verbose = False
 
     with patch('sys.stdout.write') as mock_stdout:
-        cli.cmd_monitor(args)
+        cli.cmd_route_check(args)
         written_calls = "".join(call[0][0] for call in mock_stdout.call_args_list)
         assert "Status: WARNING" in written_calls
         assert "Tight Connection warning" in written_calls

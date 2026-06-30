@@ -12,7 +12,7 @@ The most critical task when handling background monitoring is to **filter out no
 
 ## Preferences Storage
 Preferences for **autonomous monitoring** are stored in your workspace at `.sl/preferences.json`.
-You must interact with this configuration exclusively via the `python scripts/cli.py favorite` subcommands, which handles validation.
+You must interact with this configuration exclusively via the `site save/remove` and `route save/remove` subcommands, which handle validation.
 
 ## Core Actions
 All actions are performed by invoking `python scripts/cli.py`. For detailed command arguments and response layouts, refer to **`references/api.md`**.
@@ -21,19 +21,23 @@ All actions are performed by invoking `python scripts/cli.py`. For detailed comm
    - Command: `python scripts/cli.py site list "<query>"`
 2. **site departures**: Fetch upcoming real-time departures.
    - Command: `python scripts/cli.py site departures <site_id> [--line <line>] [--transport <mode>] [--direction <dir>] [--forecast <forecast>]`
-3. **deviations**: Fetch active or planned transit disruptions.
+3. **site check**: Check departures/disruptions for a single site or all favorite stops.
+   - Command: `python scripts/cli.py site check [<site_id>] [-v]`
+4. **site save / remove**: Save or remove favorite stops in preferences.
+   - Commands: `python scripts/cli.py site save ...` / `python scripts/cli.py site remove ...`
+5. **route check**: Check connection safety buffer and departures for a route or all routes.
+   - Command: `python scripts/cli.py route check [<alias>] [-v]`
+6. **route save / remove**: Save or remove favorite routes in preferences.
+   - Commands: `python scripts/cli.py route save ...` / `python scripts/cli.py route remove ...`
+7. **deviations**: Fetch active or planned transit disruptions.
    - Command: `python scripts/cli.py deviations [--site <site_id>] [--line <line>] [--future]`
-4. **favorite management**: Add, remove, or list favourite sites/routes for monitoring.
-   - Commands: `python scripts/cli.py favorite [list | site-add | site-remove | route-add | route-remove] ...`
-5. **monitor**: Run autonomous checks for all configured favorites.
-   - Command: `python scripts/cli.py monitor`
 
 ## Autonomous Directives (Background Monitoring)
 During autonomous execution (e.g., background heartbeat or cron job):
-1. Execute `python scripts/cli.py monitor`.
-2. Inspect the output:
-   - If output starts with `Status: OK`, take no action.
-   - If output starts with `Status: WARNING`, parse the warnings list (e.g. `[ROUTE_DISRUPTION]`, `[TIGHT_CONNECTION]`).
+1. Execute `python scripts/cli.py site check` and `python scripts/cli.py route check`.
+2. Inspect the outputs:
+   - If outputs start with `Status: OK`, take no action.
+   - If outputs start with `Status: WARNING`, parse the warnings list (e.g. `[ROUTE_DISRUPTION]`, `[TIGHT_CONNECTION]`).
 3. Compare returned warnings against context memory.
 4. Only send a notification if a new, relevant warning is detected.
 5. Adhere to Trafiklab's limit of maximum 1 request per minute (monitored internally).
