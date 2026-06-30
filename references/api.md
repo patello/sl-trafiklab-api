@@ -1,13 +1,14 @@
-# SL Trafiklab API References
+# SL Trafiklab CLI & API References
 
-## Base URL
-All API calls use: `https://transport.integration.sl.se/v1`
+The `sl-trafiklab-api` skill wraps the SL Integration and Deviations APIs using a standalone, zero-dependency Python script at `scripts/cli.py`.
 
-No API key is required for this API.
+---
 
 ## State Storage (`.sl/preferences.json`)
-Preferences are for **autonomous background monitoring only**. The skill can query ANY stop or route on demand without registration.
 
+The monitoring preferences file stores sites and multi-leg routes configured for autonomous background check notifications. It is loaded and modified using the `favorite` namespace commands.
+
+### Format Example
 ```json
 {
   "favourite_stops": [
@@ -23,23 +24,25 @@ Preferences are for **autonomous background monitoring only**. The skill can que
     { 
       "id": 9192, 
       "name": "Gullmarsplan",
-      "lines": [4, 66],
+      "lines": ["4", "66"],
       "transport_modes": ["BUS", "METRO"]
     }
   ],
   "favourite_routes": [
     {
-      "name": "Work Commute",
+      "name": "Daily Commute",
       "legs": [
         { 
-          "lines": [66], 
-          "from": { "id": 1386, "name": "Pokalvägen" }, 
-          "to": { "id": 1339, "name": "Södra station" } 
+          "lines": ["66"], 
+          "from": { "id": 1001, "name": "Generic Stop A" }, 
+          "to": { "id": 1002, "name": "Generic Stop B" },
+          "travel_time_minutes": 15
         },
         { 
-          "lines": [40, 41], 
-          "from": { "id": 9530, "name": "Stockholms södra" }, 
-          "to": { "id": 9526, "name": "Flemingsberg" } 
+          "lines": ["40", "41"], 
+          "from": { "id": 9002, "name": "Generic Station B" }, 
+          "to": { "id": 9003, "name": "Generic Station C" },
+          "travel_time_minutes": 20
         }
       ]
     }
@@ -47,118 +50,76 @@ Preferences are for **autonomous background monitoring only**. The skill can que
 }
 ```
 
-**Field descriptions:**
-- `favourite_stops`: Array of stops to monitor autonomously. Each stop can optionally have:
-  - `id` (required): Site ID
-  - `name` (required): Stop name for display
-  - `lines` (optional): Array of line IDs to monitor specifically at this stop
-  - `transport_modes` (optional): Filter transports at this stop (`BUS`, `METRO`, `TRAM`, `TRAIN`, `SHIP`, `FERRY`, `TAXI`)
-- `favourite_routes`: Array of multi-leg routes for precise deviation monitoring. Each route has:
-  - `name` (required): Route name for display
-  - `legs` (required): Array of journey segments with `lines`, `from`, and `to` using the same structure as before
+---
 
-*(Note: Allowed `transport_modes` are strictly limited to: `BUS`, `METRO`, `TRAM`, `TRAIN`, `SHIP`, `FERRY`, `TAXI`)*
+## CLI Reference
 
-## API Operations
+All commands are run using Python:
 
-### 1. `search_sl_sites`
-Finds the numeric Site ID for a given stop name. The Departures and Deviations APIs require numeric IDs when searching for specific locations.
+### 1. `site` Commands
 
-**CRITICAL WARNING:** The `/sites` endpoint returns a massive JSON payload containing every stop in Stockholm. NEVER attempt to read the entire response directly into the context window. You MUST pipe the response through `jq` to filter it locally.
+- **Search Sites:** Search for a transit stop's numeric Site ID by name.
+  ```bash
+  python scripts/cli.py site list "Odenplan"
+  ```
+- **Fetch Departures:** Get live upcoming departures for a site.
+  ```bash
+  python scripts/cli.py site departures 9117 --line 4 --transport BUS
+  ```
 
-```bash
-read -r SEARCH_TERM << 'EOF'
-T-Centralen
-EOF
+### 2. `deviations` Command
 
-curl -s "https://transport.integration.sl.se/v1/sites" | \
-jq -c --arg st "$SEARCH_TERM" '.[] | select(.name | test($st; "i")) | {id, name}' | head -n 5
-```
+- **Fetch Transit Disruptions:** Check active deviations affecting specific lines or stop sites.
+  ```bash
+  python scripts/cli.py deviations --site 9001 --line 40 -v
+  ```
 
-### 2. `fetch_departures`
-Fetch real-time departures from a specific site. **Can be used with ANY site ID** — does not need to be in `favourite_stops`.
+### 3. `favorite` Commands
 
-**Endpoint:** `GET /sites/{siteId}/departures`
+- **List Favorites:** View saved favorite sites and routes.
+  ```bash
+  python scripts/cli.py favorite list
+  ```
+- **Add Favorite Site:** Add a station/stop site to preferences.
+  ```bash
+  python scripts/cli.py favorite site-add 9001 "T-Centralen" --lines "17,18,19" --modes METRO
+  ```
+- **Remove Favorite Site:** Remove a site from preferences.
+  ```bash
+  python scripts/cli.py favorite site-remove 9001
+  ```
+- **Add Favorite Route:** Add a multi-leg route (using double-escaped JSON representation of the legs array).
+  ```bash
+  python scripts/cli.py favorite route-add "Daily Commute" '[{"lines":["66"],"from":{"id":1001,"name":"Generic Stop A"},"to":{"id":1002,"name":"Generic Stop B"},"travel_time_minutes":15}]'
+  ```
+- **Remove Favorite Route:** Remove a route by name.
+  ```bash
+  python scripts/cli.py favorite route-remove "Daily Commute"
+  ```
 
-**Parameters:**
-- `siteId` (path, required): The site ID to fetch departures from
-- `transport` (query, optional): Filter by transport mode (`BUS`, `METRO`, `TRAM`, `TRAIN`, `SHIP`, `FERRY`, `TAXI`)
-- `line` (query, optional): Filter by line ID
-- `direction` (query, optional): Filter by direction code (1 or 2)
-- `forecast` (query, optional): Time window in minutes (default 60, min 5, max 1200)
+### 4. `monitor` Command
 
-**Returns:**
-- `departures`: Array of upcoming departures (max 3 per line & direction)
-- `stop_deviations`: Array of deviations affecting the site
+- **Run Autonomous Checks:** Evaluates schedules and deviations for all saved favorites, returning connection alerts or transit disruption warnings.
+  ```bash
+  python scripts/cli.py monitor
+  ```
 
-```bash
-SITE_ID=9192
-LINE_FILTER=4
-TRANSPORT_MODE=METRO
+---
 
-# Basic departures fetch (any site)
-curl -s "https://transport.integration.sl.se/v1/sites/${SITE_ID}/departures"
+## Running the Test Suite
 
-# With line filter
-curl -s "https://transport.integration.sl.se/v1/sites/${SITE_ID}/departures?line=${LINE_FILTER}"
+The skill includes a built-in test suite using **pytest** to verify CLI and API functionality:
 
-# With transport mode filter
-curl -s "https://transport.integration.sl.se/v1/sites/${SITE_ID}/departures?transport=${TRANSPORT_MODE}"
+- **Run all tests (both offline unit tests and live integration checks):**
+  ```bash
+  pytest
+  ```
+- **Run only unit tests (offline mock testing):**
+  ```bash
+  pytest -m "not integration"
+  ```
+- **Run only integration tests (live network testing):**
+  ```bash
+  pytest -m integration
+  ```
 
-# Combined filters
-curl -s "https://transport.integration.sl.se/v1/sites/${SITE_ID}/departures?line=${LINE_FILTER}&transport=${TRANSPORT_MODE}&forecast=30"
-```
-
-**Response format:**
-Each departure contains:
-- `direction`: Destination name
-- `direction_code`: 1 or 2 (back & forth)
-- `destination`: Display destination name
-- `scheduled`: Officially scheduled departure time
-- `expected`: Real-time estimated departure
-- `display`: User-friendly formatted time
-- `state`: Departure state (`EXPECTED`, `CANCELLED`, `ATSTOP`, etc.)
-- `line`: Line info including designation, transport_mode, group_of_lines
-- `stop_point`: Stop point details (name, designation)
-- `deviations`: Array of deviations for this specific departure
-
-> [!WARNING]
-> **API Limitation:** The departures payload **only contains departure information from the queried stop**. It does NOT contain arrival times or travel times to downstream stops. Never attempt to align departure times from different stops line-by-line to guess travel times. Travel times must be retrieved from scheduling rules/memories (e.g. 14 minutes on Pendeltåg between Flemingsberg and Södra, 25 minutes on Bus 66 between Pokalvägen and Södra) and added to departure times to compute arrival times.
-
-### 3. `fetch_deviations`
-Fetches disruption information. **Can be queried for ANY site/line** — favourites are for autonomous monitoring only.
-Trafiklab limit: maximum 1 request per minute.
-
-```bash
-# FUTURE_FLAG: "false" for active disruptions, "true" for planned maintenance.
-# QUERY_PARAMS: Formatted string of sites and lines (e.g., site=9001&line=4&line=18).
-
-curl -s "https://deviations.integration.sl.se/v1/messages?future=${FUTURE_FLAG}&${QUERY_PARAMS}"
-```
-
-**Autonomous Filtering for favourite_routes (CRITICAL):**
-When processing autonomous checks for `favourite_routes`, analyze the JSON array and extract `message_variants[].header`, `message_variants[].details`, and `scope.stop_areas[]`. Use your analytical capabilities to filter out irrelevant information:
-- **Ignore (Silence):** If the disruption text only describes problems at a localized stop (e.g., "stop moved 30 meters", "withdrawn stop", "does not stop at [Stop X]") AND this stop ID does not match any of the boarding, alighting, or transfer Site IDs for that specific leg of the saved `favourite_routes`.
-- **Report:** If the disruption affects the entire line generally (e.g., "canceled departures", "diverted traffic affecting total travel time", "vehicle fault", "major delays") OR if it explicitly affects the specific Site IDs the user intends to use.
-- For `favourite_stops`, deviations affecting the stop's registered `lines` should be reported.
-
-### 4. `fetch_lines`
-List all lines within Region Stockholm, grouped by transport mode.
-
-**Endpoint:** `GET /lines?transport_authority_id={id}`
-
-**Parameters:**
-- `transport_authority_id` (query, required): 1 for SL, 8 for UL
-
-```bash
-curl -s "https://transport.integration.sl.se/v1/lines?transport_authority_id=1"
-```
-
-### 5. `fetch_stop_points`
-List all stop points within Region Stockholm.
-
-**Endpoint:** `GET /stop-points`
-
-```bash
-curl -s "https://transport.integration.sl.se/v1/stop-points" | head -c 10000
-```

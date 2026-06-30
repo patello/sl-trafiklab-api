@@ -3,3 +3,8 @@
 .gitignore
 .clawignore
 README.md
+requirements.txt
+pytest.ini
+tests/
+**/__pycache__/
+**/*.pyc
