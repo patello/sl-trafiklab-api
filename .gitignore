@@ -1,0 +1,6 @@
+# ClawHub tracking (locally created when installing)
+.clawhub/
+
+# System and OS files
+.DS_Store
+Thumbs.db
