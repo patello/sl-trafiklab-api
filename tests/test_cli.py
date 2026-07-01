@@ -183,6 +183,117 @@ def test_route_check_tight_connection_warning(mock_make_request, prefs_path):
     with patch('sys.stdout.write') as mock_stdout:
         cli.cmd_route_check(args)
         written_calls = "".join(call[0][0] for call in mock_stdout.call_args_list)
-        assert "Status: WARNING" in written_calls
-        assert "Tight Connection warning" in written_calls
+        assert "Warnings:" in written_calls
+        assert "Tight connection" in written_calls
         assert "has only 3 min buffer" in written_calls
+
+
+@patch('scripts.cli.make_request')
+def test_route_check_with_direction_filtering_and_sequential_filtering(mock_make_request, prefs_path):
+    """Verify that direction list filtering and sequential arrival filtering works in route check."""
+    route = {
+      "name": "Commute Route",
+      "legs": [
+        {
+          "lines": ["10"],
+          "from": { "id": 1386, "name": "Stop A" },
+          "to": { "id": 1339, "name": "Station B" },
+          "travel_time_minutes": 7
+        },
+        {
+          "lines": ["40", "41"],
+          "from": { "id": 9530, "name": "Station B" },
+          "to": { "id": 9526, "name": "Stop C" },
+          "travel_time_minutes": 14,
+          "direction": ["Terminus B", "Terminus C"]
+        }
+      ]
+    }
+    cli.save_prefs({"favourite_stops": [], "favourite_routes": [route]}, prefs_path)
+
+    now = datetime.now()
+    bus_dep = now.replace(hour=8, minute=0, second=0, microsecond=0)
+    
+    # Leg 2 options:
+    # 1. Terminus A (wrong direction, arrives 08:10)
+    # 2. Terminus B (right direction, arrives 08:05 - before bus arrives at 08:07 - should be filtered sequentially)
+    # 3. Terminus C (right direction, arrives 08:11 - valid connection)
+    train_uppsala = now.replace(hour=8, minute=10, second=0, microsecond=0)
+    train_tumba_early = now.replace(hour=8, minute=5, second=0, microsecond=0)
+    train_sodertalje = now.replace(hour=8, minute=11, second=0, microsecond=0)
+
+    def mock_api(url, params=None):
+        if "sites/1386/departures" in url:
+            return {
+                "departures": [{
+                    "line": {"designation": "10"},
+                    "destination": "Destination A",
+                    "scheduled": bus_dep.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "expected": bus_dep.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "state": "EXPECTED"
+                }]
+            }
+        elif "sites/9530/departures" in url:
+            return {
+                "departures": [
+                    {
+                        "line": {"designation": "40"},
+                        "destination": "Terminus A",
+                        "direction": "Terminus A",
+                        "direction_code": 1,
+                        "scheduled": train_uppsala.strftime("%Y-%m-%dT%H:%M:%S"),
+                        "expected": train_uppsala.strftime("%Y-%m-%dT%H:%M:%S"),
+                        "state": "EXPECTED"
+                    },
+                    {
+                        "line": {"designation": "40"},
+                        "destination": "Terminus B",
+                        "direction": "Terminus B",
+                        "direction_code": 2,
+                        "scheduled": train_tumba_early.strftime("%Y-%m-%dT%H:%M:%S"),
+                        "expected": train_tumba_early.strftime("%Y-%m-%dT%H:%M:%S"),
+                        "state": "EXPECTED"
+                    },
+                    {
+                        "line": {"designation": "41"},
+                        "destination": "Terminus C",
+                        "direction": "Terminus C",
+                        "direction_code": 2,
+                        "scheduled": train_sodertalje.strftime("%Y-%m-%dT%H:%M:%S"),
+                        "expected": train_sodertalje.strftime("%Y-%m-%dT%H:%M:%S"),
+                        "state": "EXPECTED"
+                    }
+                ]
+            }
+        return {}
+
+    mock_make_request.side_effect = mock_api
+
+    args = MagicMock()
+    args.preferences = prefs_path
+    args.alias = "Commute Route"
+    args.verbose = False
+
+    with patch('sys.stdout.write') as mock_stdout:
+        cli.cmd_route_check(args)
+        written_calls = "".join(call[0][0] for call in mock_stdout.call_args_list)
+        
+        # Verify departures printing
+        assert "Leg 1: Line 10 from Stop A" in written_calls
+        assert "08:00 (Destination A)" in written_calls
+        assert "Leg 2: Line 40, 41 from Station B" in written_calls
+        
+        # Terminus C should be listed (valid connection >= 08:07 and correct direction)
+        assert "08:11 (Terminus C)" in written_calls
+        
+        # Terminus A (wrong direction) and Terminus B early (before arrival time 08:07) should NOT be listed
+        assert "Terminus A" not in written_calls
+        assert "08:05 (Terminus B)" not in written_calls
+        
+        # Verify tight connection message contents
+        assert "Warnings:" in written_calls
+        assert "leaving Stop A at 08:00" in written_calls
+        assert "expected arrival 08:07" in written_calls
+        assert "toward Terminus C departing at 08:11" in written_calls
+        assert "has only 4 min buffer" in written_calls
+

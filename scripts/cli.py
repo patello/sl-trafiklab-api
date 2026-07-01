@@ -359,21 +359,27 @@ def cmd_site_check(args):
             sys.stdout.write(f"  Details: {w['details']}\n")
 
 
-def check_single_route(route, warnings):
-    """Check departures and deviations for a single route."""
+def check_single_route(route, warnings, verbose=False):
+    """Check departures and deviations for a single route, printing upcoming departures and warnings for each leg."""
     route_name = route["name"]
     legs = route.get("legs", [])
     leg_departures = []
+    route_warnings = []
+
+    sys.stdout.write(f"\nChecking route '{route_name}'...\n")
 
     for i, leg in enumerate(legs):
         from_site = leg.get("from", {})
         from_id = from_site.get("id")
         from_name = from_site.get("name")
         lines = leg.get("lines", [])
+        direction_pref = leg.get("direction")
 
-        # Fetch departures for boarding stop
+        # Fetch departures for boarding stop starting from current time
         dep_url = f"{TRANSPORT_API_URL}/sites/{from_id}/departures"
         dep_data = make_request(dep_url)
+
+        # 1. Filter by lines
         if dep_data and lines:
             line_strs = [str(l) for l in lines]
             dep_data["departures"] = [
@@ -384,32 +390,132 @@ def check_single_route(route, warnings):
         valid_deps = []
         if dep_data:
             for dep in dep_data.get("departures", []):
-                if dep.get("state") != "CANCELLED":
-                    valid_deps.append(dep)
+                if dep.get("state") == "CANCELLED":
+                    continue
+
+                # 2. Filter by direction (case-insensitive destination substring or numeric direction code)
+                if direction_pref:
+                    if isinstance(direction_pref, list):
+                        check_dirs = direction_pref
+                    else:
+                        check_dirs = [direction_pref]
+
+                    dir_matched = False
+                    for p_dir in check_dirs:
+                        if str(p_dir) in ["1", "2"]:
+                            if dep.get("direction_code") == int(p_dir):
+                                dir_matched = True
+                                break
+                        else:
+                            d_dir = dep.get("direction", "")
+                            d_dest = dep.get("destination", "")
+                            if (p_dir.lower() in d_dir.lower()) or (p_dir.lower() in d_dest.lower()):
+                                dir_matched = True
+                                break
+                    if not dir_matched:
+                        continue
+
+                valid_deps.append(dep)
+
+        # 3. Apply Sequential Arrival Filtering for subsequent legs
+        if i > 0 and leg_departures[i-1]:
+            prev_leg = legs[i-1]
+            prev_travel = prev_leg.get("travel_time_minutes") or 0
+            first_prev_dep = leg_departures[i-1][0]
+            first_prev_time = parse_time(first_prev_dep.get("expected") or first_prev_dep.get("scheduled"))
+            if first_prev_time:
+                earliest_arrival = first_prev_time + timedelta(minutes=prev_travel)
+                # Filter departures to only keep those leaving at or after earliest arrival
+                filtered_deps = []
+                for dep in valid_deps:
+                    dep_time = parse_time(dep.get("expected") or dep.get("scheduled"))
+                    if dep_time and dep_time >= earliest_arrival:
+                        filtered_deps.append(dep)
+                valid_deps = filtered_deps
 
         leg_departures.append(valid_deps)
 
+        # 4. Display upcoming departures for this leg
+        line_csv = ", ".join(str(l) for l in lines)
+        sys.stdout.write(f"Leg {i+1}: Line {line_csv} from {from_name}\n")
+        if not valid_deps:
+            sys.stdout.write("  - No upcoming departures found\n")
+        else:
+            now_time = datetime.now()
+            for dep in valid_deps[:3]:
+                dest = dep.get("destination", "")
+                sched = dep.get("scheduled", "")
+                expected = dep.get("expected", sched)
+                expected_parsed = parse_time(expected)
+                expected_str = expected_parsed.strftime("%H:%M") if expected_parsed else expected
+                
+                # Format with display string, converting absolute clock time to relative minutes and "Nu" to "now"
+                display_time = dep.get("display")
+                if display_time:
+                    if "nu" in display_time.lower():
+                        display_str = "now"
+                    elif "min" in display_time.lower():
+                        display_str = display_time.lower()
+                    else:
+                        if expected_parsed:
+                            diff_mins = int((expected_parsed - now_time).total_seconds() / 60)
+                            display_str = f"{diff_mins} min" if diff_mins > 0 else "now"
+                        else:
+                            display_str = display_time
+                else:
+                    if expected_parsed:
+                        diff_mins = int((expected_parsed - now_time).total_seconds() / 60)
+                        display_str = f"{diff_mins} min" if diff_mins > 0 else "now"
+                    else:
+                        display_str = ""
+
+                if display_str:
+                    sys.stdout.write(f"  - {expected_str} ({dest}) -- {display_str}\n")
+                else:
+                    sys.stdout.write(f"  - {expected_str} ({dest})\n")
+
         # Fetch deviations affecting this leg (site or line)
         dev_url = f"{DEVIATIONS_API_URL}/messages"
+        seen_dev_headers = set()
+
+        # 1. Query station-wide deviations for this boarding site
+        site_devs = make_request(dev_url, {"future": False, "site": from_id})
+        if site_devs:
+            for dev in site_devs:
+                variants = dev.get("message_variants", [])
+                if variants:
+                    header = variants[0]['header']
+                    if header not in seen_dev_headers:
+                        seen_dev_headers.add(header)
+                        route_warnings.append({
+                            "type": "STATION_DISRUPTION",
+                            "leg": i + 1,
+                            "message": header,
+                            "details": variants[0].get("details", "")
+                        })
+
+        # 2. Query line-specific deviations for this leg
         for line_id in lines:
-            devs = make_request(dev_url, {"future": False, "line": line_id})
-            if devs:
-                for dev in devs:
-                    # Apply strict deviation assessment: ignore if localized to an unused stop point
+            line_devs = make_request(dev_url, {"future": False, "line": line_id})
+            if line_devs:
+                for dev in line_devs:
+                    # Apply strict deviation assessment
                     stop_areas = dev.get("scope", {}).get("stop_areas", [])
                     affected_stop_ids = [sa.get("id") for sa in stop_areas if sa.get("id")]
-
-                    # If deviation is stop-specific and doesn't match our start/end site, skip
                     if affected_stop_ids and from_id not in affected_stop_ids:
                         continue
 
                     variants = dev.get("message_variants", [])
                     if variants:
-                        warnings.append({
-                            "type": "ROUTE_DISRUPTION",
-                            "message": f"Route '{route_name}' Leg {i+1} (Line {line_id}): {variants[0]['header']}",
-                            "details": variants[0].get("details", "")
-                        })
+                        header = variants[0]['header']
+                        if header not in seen_dev_headers:
+                            seen_dev_headers.add(header)
+                            route_warnings.append({
+                                "type": "ROUTE_DISRUPTION",
+                                "leg": i + 1,
+                                "message": header,
+                                "details": variants[0].get("details", "")
+                            })
 
     # Evaluate Connections between sequential legs
     for i in range(len(legs) - 1):
@@ -420,11 +526,10 @@ def check_single_route(route, warnings):
         if not travel_time:
             continue
 
-        # Look for connecting departure pairs
         deps1 = leg_departures[i]
         deps2 = leg_departures[i+1]
 
-        for d1 in deps1[:3]: # check top 3 upcoming
+        for d1 in deps1[:3]:
             d1_time = parse_time(d1.get("expected") or d1.get("scheduled"))
             if not d1_time:
                 continue
@@ -445,10 +550,51 @@ def check_single_route(route, warnings):
                 if buffer < 5.0:
                     line1 = d1.get("line", {}).get("designation", "")
                     line2 = matching_d2.get("line", {}).get("designation", "")
-                    warnings.append({
+                    from_name_val = leg1.get("from", {}).get("name", "Origin")
+                    d2_dir = matching_d2.get("direction", "destination")
+                    route_warnings.append({
                         "type": "TIGHT_CONNECTION",
-                        "message": f"Tight Connection warning on '{route_name}': Leg {i+1} ({line1} expected arrival {arrival_time.strftime('%H:%M')}) to Leg {i+2} ({line2} departure {d2_time.strftime('%H:%M')}) has only {int(buffer)} min buffer (min required: 5 min)."
+                        "leg": i + 1,
+                        "message": f"({line1} leaving {from_name_val} at {d1_time.strftime('%H:%M')}, expected arrival {arrival_time.strftime('%H:%M')}) to Leg {i+2} ({line2} toward {d2_dir} departing at {d2_time.strftime('%H:%M')}) has only {int(buffer)} min buffer (min required: 5 min)."
                     })
+
+    # Output route-specific warnings immediately below departures
+    if route_warnings:
+        sys.stdout.write("Warnings:\n")
+        grouped = {}
+        order = []
+        for rw in route_warnings:
+            key = (rw["type"], rw["leg"])
+            if key not in grouped:
+                grouped[key] = []
+                order.append(key)
+            grouped[key].append(rw)
+
+        for (w_type, leg_num) in order:
+            items = grouped[(w_type, leg_num)]
+            leg_label = f"Leg {leg_num}"
+
+            if w_type == "STATION_DISRUPTION":
+                header_label = f"Station disruption on {leg_label}"
+            elif w_type == "ROUTE_DISRUPTION":
+                header_label = f"Route disruption on {leg_label}"
+            elif w_type == "TIGHT_CONNECTION":
+                header_label = f"Tight connection on {leg_label}"
+            else:
+                header_label = f"{w_type} on {leg_label}"
+
+            if len(items) == 1:
+                sys.stdout.write(f"  - {header_label}: {items[0]['message']}\n")
+                if verbose and items[0].get("details"):
+                    sys.stdout.write(f"    Details: {items[0]['details']}\n")
+            else:
+                sys.stdout.write(f"  - {header_label}:\n")
+                for item in items:
+                    sys.stdout.write(f"    - {item['message']}\n")
+                    if verbose and item.get("details"):
+                        sys.stdout.write(f"      Details: {item['details']}\n")
+
+    warnings.extend(route_warnings)
 
 
 def cmd_route_check(args):
@@ -468,8 +614,7 @@ def cmd_route_check(args):
             sys.stderr.write(f"Route '{args.alias}' not found in favorites.\n")
             sys.exit(1)
 
-        sys.stdout.write(f"Checking route '{args.alias}'...\n")
-        check_single_route(target, warnings)
+        check_single_route(target, warnings, verbose=args.verbose)
     else:
         if not routes:
             sys.stdout.write("No favorite routes configured to check.\n")
@@ -477,18 +622,9 @@ def cmd_route_check(args):
 
         sys.stdout.write("Checking all favorite routes...\n")
         for r in routes:
-            check_single_route(r, warnings)
+            check_single_route(r, warnings, verbose=args.verbose)
 
-    # Output Warnings
-    if not warnings:
-        sys.stdout.write("Status: OK. No disruptions or connection issues detected.\n")
-        return
 
-    sys.stdout.write(f"Status: WARNING. Detected {len(warnings)} issues:\n")
-    for w in warnings:
-        sys.stdout.write(f"- [{w['type']}] {w['message']}\n")
-        if args.verbose and w.get("details"):
-            sys.stdout.write(f"  Details: {w['details']}\n")
 
 
 # =====================================================================

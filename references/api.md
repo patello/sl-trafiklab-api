@@ -42,7 +42,8 @@ The monitoring preferences file stores sites and multi-leg routes configured for
           "lines": ["40", "41"], 
           "from": { "id": 9002, "name": "Generic Station B" }, 
           "to": { "id": 9003, "name": "Generic Station C" },
-          "travel_time_minutes": 20
+          "travel_time_minutes": 20,
+          "direction": ["Generic Terminus C", "Generic Terminus D"]
         }
       ]
     }
@@ -88,7 +89,7 @@ All commands are run using Python:
 
 ### 3. `route` Commands
 
-- **Check Routes:** Evaluate departures and connection buffers for one or all favorite routes.
+- **Check Routes:** Evaluate departures, show upcoming departures for each leg, and evaluate connection buffers for one or all favorite routes.
   ```bash
   # Check all favorite routes
   python scripts/cli.py route check
@@ -98,7 +99,7 @@ All commands are run using Python:
   ```
 - **Save Favorite Route:** Add or update a multi-leg route (using a JSON representation of the legs array).
   ```bash
-  python scripts/cli.py route save "Daily Commute" '[{"lines":["66"],"from":{"id":1001,"name":"Generic Stop A"},"to":{"id":1002,"name":"Generic Stop B"},"travel_time_minutes":15}]'
+  python scripts/cli.py route save "Daily Commute" '[{"lines":["66"],"from":{"id":1001,"name":"Generic Stop A"},"to":{"id":1002,"name":"Generic Stop B"},"travel_time_minutes":15,"direction":"Generic Terminus B"}]'
   ```
 - **Remove Favorite Route:** Remove a route by alias.
   ```bash

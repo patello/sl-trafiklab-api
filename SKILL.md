@@ -25,19 +25,11 @@ All actions are performed by invoking `python scripts/cli.py`. For detailed comm
    - Command: `python scripts/cli.py site check [<site_id>] [-v]`
 4. **site save / remove**: Save or remove favorite stops in preferences.
    - Commands: `python scripts/cli.py site save ...` / `python scripts/cli.py site remove ...`
-5. **route check**: Check connection safety buffer and departures for a route or all routes.
+5. **route check**: Check connection safety buffer and print upcoming departures for each leg of a route (or all routes).
    - Command: `python scripts/cli.py route check [<alias>] [-v]`
 6. **route save / remove**: Save or remove favorite routes in preferences.
    - Commands: `python scripts/cli.py route save ...` / `python scripts/cli.py route remove ...`
 7. **deviations**: Fetch active or planned transit disruptions.
    - Command: `python scripts/cli.py deviations [--site <site_id>] [--line <line>] [--future]`
 
-## Autonomous Directives (Background Monitoring)
-During autonomous execution (e.g., background heartbeat or cron job):
-1. Execute `python scripts/cli.py site check` and `python scripts/cli.py route check`.
-2. Inspect the outputs:
-   - If outputs start with `Status: OK`, take no action.
-   - If outputs start with `Status: WARNING`, parse the warnings list (e.g. `[ROUTE_DISRUPTION]`, `[TIGHT_CONNECTION]`).
-3. Compare returned warnings against context memory.
-4. Only send a notification if a new, relevant warning is detected.
-5. Adhere to Trafiklab's limit of maximum 1 request per minute (monitored internally).
+
