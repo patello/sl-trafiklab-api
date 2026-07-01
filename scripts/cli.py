@@ -417,7 +417,8 @@ def cmd_route_find(args):
         
         sys.stdout.write(f"\nOption {idx + 1}: Total duration {duration_mins} min ({interchanges} changes)\n")
         
-        for l_idx, leg in enumerate(journey.get("legs", [])):
+        transit_leg_idx = 1
+        for leg in journey.get("legs", []):
             origin_name = extract_stop_name(leg.get("origin"))
             dest_name = extract_stop_name(leg.get("destination"))
             
@@ -432,8 +433,11 @@ def cmd_route_find(args):
                 sys.stdout.write(f"  Walk: {origin_name} to {dest_name} ({leg_duration} min)\n")
             else:
                 line = leg.get("transportation", {}).get("disassembledName")
-                sys.stdout.write(f"  Leg {l_idx + 1}: Line {line} from {origin_name} to {dest_name}\n")
-                sys.stdout.write(f"    - {dep_str} -> {arr_str}\n")
+                direction = leg.get("transportation", {}).get("destination", {}).get("name")
+                dir_str = f" ({direction})" if direction else ""
+                sys.stdout.write(f"  Leg {transit_leg_idx}: Line {line} from {origin_name} to {dest_name}\n")
+                sys.stdout.write(f"    - {dep_str} -> {arr_str}{dir_str}\n")
+                transit_leg_idx += 1
 
 
 def cmd_route_save(args):
@@ -781,10 +785,19 @@ def check_single_route(route, warnings, verbose=False):
                     else:
                         display_str = ""
 
+                # Format time string with estimated arrival if travel time is configured
+                travel_time = leg.get("travel_time_minutes") or 0
+                time_range_str = expected_str
+                if travel_time > 0 and expected_parsed:
+                    arr_parsed = expected_parsed + timedelta(minutes=travel_time)
+                    arr_str = arr_parsed.strftime("%H:%M")
+                    time_range_str = f"{expected_str} -> ~{arr_str}"
+
+                dest_str = f" ({dest})" if dest else ""
                 if display_str:
-                    sys.stdout.write(f"  - {expected_str} ({dest}) -- {display_str}\n")
+                    sys.stdout.write(f"  - {time_range_str}{dest_str} -- {display_str}\n")
                 else:
-                    sys.stdout.write(f"  - {expected_str} ({dest})\n")
+                    sys.stdout.write(f"  - {time_range_str}{dest_str}\n")
 
         # Fetch deviations affecting this leg (site or line)
         dev_url = f"{DEVIATIONS_API_URL}/messages"
