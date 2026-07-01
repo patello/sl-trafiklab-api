@@ -80,6 +80,84 @@ def save_prefs(prefs, path=None):
         json.dump(prefs, f, indent=2, ensure_ascii=False)
 
 
+# Journey Planner API
+JOURNEY_API_URL = "https://journeyplanner.integration.sl.se/v2"
+
+
+def resolve_stop(query):
+    """Resolve a stop name or ID using SL Journey Planner stop-finder."""
+    query_str = str(query).strip()
+    if len(query_str) == 4 and query_str.isdigit():
+        query_str = "1800" + query_str
+
+    url = f"{JOURNEY_API_URL}/stop-finder"
+    res = make_request(url, {
+        "name_sf": query_str,
+        "any_obj_filter_sf": 2,
+        "type_sf": "any"
+    })
+    if not res or not res.get("locations"):
+        return None
+    
+    # Return best match if found, else first item
+    best = None
+    for loc in res["locations"]:
+        if loc.get("isBest"):
+            best = loc
+            break
+    if not best:
+        best = res["locations"][0]
+    return best
+
+
+def extract_site_id(loc_node):
+    """Extract stop ID from platform or stop area location node."""
+    if not loc_node:
+        return ""
+    props = loc_node.get("parent", {}).get("properties", {})
+    stop_id = props.get("stopId")
+    if not stop_id:
+        props = loc_node.get("properties", {})
+        stop_id = props.get("stopId")
+    if not stop_id:
+        full_id = loc_node.get("parent", {}).get("id") or loc_node.get("id") or ""
+        if len(full_id) >= 8:
+            stop_id = full_id[-8:]
+        else:
+            stop_id = full_id
+    return stop_id
+
+
+def extract_stop_name(loc_node):
+    """Extract and clean stop name from location node."""
+    if not loc_node:
+        return ""
+    name = loc_node.get("parent", {}).get("disassembledName")
+    if not name:
+        name = loc_node.get("parent", {}).get("name")
+    if not name:
+        name = loc_node.get("disassembledName")
+    if not name:
+        name = loc_node.get("name")
+    if name and name.startswith("Stockholm, "):
+        name = name[len("Stockholm, "):]
+    return name or ""
+
+
+def is_walk_leg(leg):
+    """Check if a trip leg is a walking or transfer footpath."""
+    if not leg:
+        return True
+    if "transportation" not in leg:
+        return True
+    prod_name = leg.get("transportation", {}).get("product", {}).get("name", "").lower()
+    if prod_name in ("footpath", "transfer", "walk"):
+        return True
+    if not leg.get("transportation", {}).get("number") and not leg.get("transportation", {}).get("disassembledName"):
+        return True
+    return False
+
+
 # =====================================================================
 # CLI Commands implementation
 # =====================================================================
@@ -215,28 +293,262 @@ def cmd_site_remove(args):
     sys.stdout.write(f"Successfully removed favorite site: {site_id}\n")
 
 
+def cmd_route_find(args):
+    """Find travel proposals dynamically using SL Journey Planner."""
+    prefs = load_prefs(args.preferences)
+    routes = prefs.get("favourite_routes", [])
+
+    origin_name = None
+    dest_name = None
+    saved_route = None
+
+    # Determine if origin_or_alias refers to a saved alias
+    for r in routes:
+        if r.get("name") == args.origin_or_alias:
+            saved_route = r
+            break
+
+    if saved_route:
+        # Load from saved route legs
+        legs = saved_route.get("legs", [])
+        if not legs:
+            sys.stderr.write(f"Saved route '{args.origin_or_alias}' has no configured legs.\n")
+            sys.exit(1)
+        origin_name = str(legs[0]["from"]["id"])
+        dest_name = str(legs[-1]["to"]["id"])
+    else:
+        # Require destination if not using a saved alias
+        if not args.destination:
+            sys.stderr.write("Error: destination is required when origin_or_alias is not a saved route alias.\n")
+            sys.exit(1)
+        origin_name = args.origin_or_alias
+        dest_name = args.destination
+
+    # Resolve origin and destination to locations
+    origin_stop = resolve_stop(origin_name)
+    if not origin_stop:
+        sys.stderr.write(f"Could not resolve origin stop: {origin_name}\n")
+        sys.exit(1)
+    
+    dest_stop = resolve_stop(dest_name)
+    if not dest_stop:
+        sys.stderr.write(f"Could not resolve destination stop: {dest_name}\n")
+        sys.exit(1)
+
+    url = f"{JOURNEY_API_URL}/trips"
+    params = {
+        "type_origin": "any",
+        "name_origin": origin_stop.get("id"),
+        "type_destination": "any",
+        "name_destination": dest_stop.get("id"),
+        "calc_number_of_trips": args.number
+    }
+    if args.time:
+        params["time"] = args.time
+    if args.date:
+        params["date"] = args.date
+
+    res = make_request(url, params)
+    if not res or not res.get("journeys"):
+        sys.stdout.write("No travel proposals found.\n")
+        return
+
+    journeys = res.get("journeys", [])
+    displayed_journeys = []
+    
+    # Leg preference filtering
+    if saved_route and not args.all:
+        saved_legs = saved_route.get("legs", [])
+        # Check if saved route is unconstrained (1 leg, no line list)
+        is_unconstrained = len(saved_legs) == 1 and not saved_legs[0].get("lines")
+        
+        if is_unconstrained:
+            displayed_journeys = journeys
+        else:
+            for j in journeys:
+                # Filter out walking legs for matching
+                transit_legs = [leg for leg in j.get("legs", []) if not is_walk_leg(leg)]
+                if len(transit_legs) != len(saved_legs):
+                    continue
+                
+                match = True
+                for idx, s_leg in enumerate(saved_legs):
+                    p_leg = transit_legs[idx]
+                    
+                    # 1. Match line designation
+                    line_desig = p_leg.get("transportation", {}).get("disassembledName")
+                    lines_str = [str(x) for x in s_leg.get("lines", [])]
+                    if not line_desig or str(line_desig) not in lines_str:
+                        match = False
+                        break
+                    
+                    # 2. Match origin site ID
+                    o_id = extract_site_id(p_leg.get("origin"))
+                    s_from_id = str(s_leg.get("from", {}).get("id"))
+                    if not o_id or not (o_id.endswith(s_from_id) or s_from_id.endswith(o_id)):
+                        match = False
+                        break
+                    
+                    # 3. Match destination site ID
+                    d_id = extract_site_id(p_leg.get("destination"))
+                    s_to_id = str(s_leg.get("to", {}).get("id"))
+                    if not d_id or not (d_id.endswith(s_to_id) or s_to_id.endswith(d_id)):
+                        match = False
+                        break
+                
+                if match:
+                    displayed_journeys.append(j)
+                    
+            if not displayed_journeys:
+                # Get the sample/first line and first origin for mismatch message
+                eg_line = saved_legs[0].get("lines", [""])[0]
+                eg_from = saved_legs[0].get("from", {}).get("name", "")
+                sys.stdout.write(f"No journey options matched your saved route leg preferences (e.g. Line {eg_line} from {eg_from}).\n")
+                sys.stdout.write(f"SL returned {len(journeys)} alternative route proposals. Run with '--all' to display them.\n")
+                return
+    else:
+        displayed_journeys = journeys
+
+    # Output proposals
+    for idx, journey in enumerate(displayed_journeys):
+        duration = journey.get("tripRtDuration") or journey.get("tripDuration") or 0
+        duration_mins = int(duration / 60)
+        interchanges = journey.get("interchanges", 0)
+        
+        sys.stdout.write(f"\nOption {idx + 1}: Total duration {duration_mins} min ({interchanges} changes)\n")
+        
+        for l_idx, leg in enumerate(journey.get("legs", [])):
+            origin_name = extract_stop_name(leg.get("origin"))
+            dest_name = extract_stop_name(leg.get("destination"))
+            
+            dep_time = parse_time(leg.get("origin", {}).get("departureTimeEstimated") or leg.get("origin", {}).get("departureTimePlanned"))
+            arr_time = parse_time(leg.get("destination", {}).get("arrivalTimeEstimated") or leg.get("destination", {}).get("arrivalTimePlanned"))
+            dep_str = dep_time.strftime("%H:%M") if dep_time else ""
+            arr_str = arr_time.strftime("%H:%M") if arr_time else ""
+            
+            if is_walk_leg(leg):
+                # Walk leg
+                leg_duration = int((leg.get("duration") or 0) / 60)
+                sys.stdout.write(f"  Walk: {origin_name} to {dest_name} ({leg_duration} min)\n")
+            else:
+                line = leg.get("transportation", {}).get("disassembledName")
+                sys.stdout.write(f"  Leg {l_idx + 1}: Line {line} from {origin_name} to {dest_name}\n")
+                sys.stdout.write(f"    - {dep_str} -> {arr_str}\n")
+
+
 def cmd_route_save(args):
     """Save favorite route."""
     prefs = load_prefs(args.preferences)
     routes = prefs.get("favourite_routes", [])
 
-    try:
-        legs = json.loads(args.legs_json)
-        if not isinstance(legs, list):
-            raise ValueError("Legs must be a JSON array of leg objects.")
-    except Exception as e:
-        sys.stderr.write(f"Invalid legs JSON: {e}\n")
+    if len(args.args) == 2:
+        name = args.args[0]
+        legs_json = args.args[1]
+        try:
+            legs = json.loads(legs_json)
+            if not isinstance(legs, list):
+                raise ValueError("Legs must be a JSON array of leg objects.")
+        except Exception as e:
+            sys.stderr.write(f"Invalid legs JSON: {e}\n")
+            sys.exit(1)
+    elif len(args.args) == 4:
+        origin = args.args[0]
+        destination = args.args[1]
+        try:
+            proposal_index = int(args.args[2])
+        except ValueError:
+            sys.stderr.write("Proposal index must be an integer.\n")
+            sys.exit(1)
+        name = args.args[3]
+
+        # Resolve origin and destination stops
+        origin_stop = resolve_stop(origin)
+        if not origin_stop:
+            sys.stderr.write(f"Could not resolve origin stop: {origin}\n")
+            sys.exit(1)
+        dest_stop = resolve_stop(destination)
+        if not dest_stop:
+            sys.stderr.write(f"Could not resolve destination stop: {destination}\n")
+            sys.exit(1)
+
+        if proposal_index == 0:
+            # Save unconstrained direct start/stop connection
+            o_id_str = extract_site_id(origin_stop)
+            o_id = int(o_id_str) if o_id_str else 0
+            o_name = extract_stop_name(origin_stop)
+            d_id_str = extract_site_id(dest_stop)
+            d_id = int(d_id_str) if d_id_str else 0
+            d_name = extract_stop_name(dest_stop)
+            legs = [{
+                "lines": [],
+                "from": {"id": o_id, "name": o_name},
+                "to": {"id": d_id, "name": d_name},
+                "travel_time_minutes": 0
+            }]
+        else:
+            # Query Trips
+            o_location_id = origin_stop.get("id")
+            d_location_id = dest_stop.get("id")
+            url = f"{JOURNEY_API_URL}/trips"
+            res = make_request(url, {
+                "type_origin": "any",
+                "name_origin": o_location_id,
+                "type_destination": "any",
+                "name_destination": d_location_id,
+                "calc_number_of_trips": 3
+            })
+            if not res or not res.get("journeys"):
+                sys.stderr.write("Could not retrieve travel proposals from SL Journey Planner.\n")
+                sys.exit(1)
+            journeys = res.get("journeys", [])
+            if proposal_index < 1 or proposal_index > len(journeys):
+                sys.stderr.write(f"Proposal index {proposal_index} out of range (available: 1-{len(journeys)}).\n")
+                sys.exit(1)
+            
+            chosen_journey = journeys[proposal_index - 1]
+            legs = []
+            for leg in chosen_journey.get("legs", []):
+                if is_walk_leg(leg):
+                    # Filter out walk legs
+                    continue
+                line_desig = leg.get("transportation", {}).get("disassembledName")
+                o_id_str = extract_site_id(leg.get("origin"))
+                o_id = int(o_id_str) if o_id_str else 0
+                o_name = extract_stop_name(leg.get("origin"))
+                d_id_str = extract_site_id(leg.get("destination"))
+                d_id = int(d_id_str) if d_id_str else 0
+                d_name = extract_stop_name(leg.get("destination"))
+                
+                # Calculate travel time in minutes
+                dep_time = parse_time(leg.get("origin", {}).get("departureTimeEstimated") or leg.get("origin", {}).get("departureTimePlanned"))
+                arr_time = parse_time(leg.get("destination", {}).get("arrivalTimeEstimated") or leg.get("destination", {}).get("arrivalTimePlanned"))
+                if dep_time and arr_time:
+                    dur = int((arr_time - dep_time).total_seconds() / 60)
+                else:
+                    dur = 0
+                
+                legs.append({
+                    "lines": [line_desig] if line_desig else [],
+                    "from": {"id": o_id, "name": o_name},
+                    "to": {"id": d_id, "name": d_name},
+                    "travel_time_minutes": dur
+                })
+            if not legs:
+                sys.stderr.write("No transit legs found in selected travel proposal.\n")
+                sys.exit(1)
+    else:
+        sys.stderr.write("Error: save subcommand expects either 2 or 4 positional arguments.\n")
         sys.exit(1)
 
     # Remove existing route by name
-    routes = [r for r in routes if r.get("name") != args.name]
+    routes = [r for r in routes if r.get("name") != name]
     routes.append({
-        "name": args.name,
+        "name": name,
         "legs": legs
     })
     prefs["favourite_routes"] = routes
     save_prefs(prefs, args.preferences)
-    sys.stdout.write(f"Successfully added favorite route: {args.name}\n")
+    sys.stdout.write(f"Successfully added favorite route: {name}\n")
 
 
 def cmd_route_remove(args):
@@ -264,7 +576,7 @@ def parse_time(time_str):
         return None
     try:
         # Strip timezone offset if present for simplicity
-        clean_str = time_str.split("+")[0]
+        clean_str = time_str.split("+")[0].rstrip("Z")
         return datetime.strptime(clean_str, "%Y-%m-%dT%H:%M:%S")
     except Exception:
         return None
@@ -435,9 +747,9 @@ def check_single_route(route, warnings, verbose=False):
 
         leg_departures.append(valid_deps)
 
-        # 4. Display upcoming departures for this leg
         line_csv = ", ".join(str(l) for l in lines)
-        sys.stdout.write(f"Leg {i+1}: Line {line_csv} from {from_name}\n")
+        to_name = leg.get("to", {}).get("name", "Destination")
+        sys.stdout.write(f"Leg {i+1}: Line {line_csv} from {from_name} to {to_name}\n")
         if not valid_deps:
             sys.stdout.write("  - No upcoming departures found\n")
         else:
@@ -690,9 +1002,18 @@ def main():
 
     # route save
     p_route_save = route_sub.add_parser("save", help="Save favorite route")
-    p_route_save.add_argument("name", help="Route alias name")
-    p_route_save.add_argument("legs_json", help="JSON array of route legs")
+    p_route_save.add_argument("args", nargs="+", help="Arguments: either <alias> <legs_json> OR <origin> <destination> <proposal_index> <alias>")
     p_route_save.add_argument("--preferences", help="Override preferences file path")
+
+    # route find
+    p_route_find = route_sub.add_parser("find", help="Find travel proposals dynamically using SL Journey Planner")
+    p_route_find.add_argument("origin_or_alias", help="Origin stop name, Site ID, or saved route alias")
+    p_route_find.add_argument("destination", nargs="?", help="Destination stop name or Site ID (optional if alias is used)")
+    p_route_find.add_argument("--preferences", help="Override preferences file path")
+    p_route_find.add_argument("--all", action="store_true", help="Bypass leg preference filtering and display all options")
+    p_route_find.add_argument("--time", help="Optional travel time in HH:MM format")
+    p_route_find.add_argument("--date", help="Optional travel date in YYYY-MM-DD format")
+    p_route_find.add_argument("--number", type=int, default=3, choices=[1, 2, 3], help="Number of travel options to return (1-3)")
 
     # route remove
     p_route_rem = route_sub.add_parser("remove", help="Remove favorite route")
@@ -720,6 +1041,8 @@ def main():
             cmd_route_check(args)
         elif args.subcommand == "save":
             cmd_route_save(args)
+        elif args.subcommand == "find":
+            cmd_route_find(args)
         elif args.subcommand == "remove":
             cmd_route_remove(args)
         else:

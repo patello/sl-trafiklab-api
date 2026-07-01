@@ -47,3 +47,39 @@ def test_live_deviations_api():
         first_dev = data[0]
         assert "id" in first_dev or "deviation_case_id" in first_dev
         assert "message_variants" in first_dev
+
+
+@pytest.mark.integration
+def test_live_stop_finder_api():
+    """Verify stop finder API returns location results for a stop search."""
+    url = f"{cli.JOURNEY_API_URL}/stop-finder"
+    data = cli.make_request(url, {
+        "name_sf": "odenplan",
+        "any_obj_filter_sf": 2,
+        "type_sf": "any"
+    })
+    
+    assert data is not None
+    assert "locations" in data
+    assert isinstance(data["locations"], list)
+    assert len(data["locations"]) > 0
+    assert "id" in data["locations"][0]
+
+
+@pytest.mark.integration
+def test_live_trips_api():
+    """Verify trips API calculates journey proposals between two site points."""
+    url = f"{cli.JOURNEY_API_URL}/trips"
+    data = cli.make_request(url, {
+        "type_origin": "any",
+        "name_origin": "9091001000009117",
+        "type_destination": "any",
+        "name_destination": "9091001000009001",
+        "calc_number_of_trips": 1
+    })
+    
+    assert data is not None
+    assert "journeys" in data
+    assert isinstance(data["journeys"], list)
+    assert len(data["journeys"]) > 0
+    assert "legs" in data["journeys"][0]

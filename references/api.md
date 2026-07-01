@@ -86,10 +86,9 @@ All commands are run using Python:
   ```bash
   python scripts/cli.py site remove 9001
   ```
-
 ### 3. `route` Commands
 
-- **Check Routes:** Evaluate departures, show upcoming departures for each leg, and evaluate connection buffers for one or all favorite routes.
+- **Check Routes:** Evaluate departures, show upcoming departures for each leg, and evaluate connection safety buffers for one or all favorite routes.
   ```bash
   # Check all favorite routes
   python scripts/cli.py route check
@@ -97,12 +96,35 @@ All commands are run using Python:
   # Check only the "Daily Commute" route
   python scripts/cli.py route check "Daily Commute" -v
   ```
-- **Save Favorite Route:** Add or update a multi-leg route (using a JSON representation of the legs array).
+
+- **Find Travel Proposals:** Search dynamically for travel proposals using SL's routing engine. Supports alias resolving, future times, and leg-preference matching.
   ```bash
-  python scripts/cli.py route save "Daily Commute" '[{"lines":["66"],"from":{"id":1001,"name":"Generic Stop A"},"to":{"id":1002,"name":"Generic Stop B"},"travel_time_minutes":15,"direction":"Generic Terminus B"}]'
+  # Search travel options between two stops
+  python scripts/cli.py route find "Generic Stop A" "Generic Stop B"
+
+  # Search future options
+  python scripts/cli.py route find "Generic Stop A" "Generic Stop B" --time "08:00" --date "2026-07-02"
+
+  # Search by alias, filtering options against saved leg constraints
+  python scripts/cli.py route find "Daily Commute"
+
+  # Bypass leg constraints to see all transit alternatives between alias terminals
+  python scripts/cli.py route find "Daily Commute" --all
+  ```
+- **Save Favorite Route:** Add or update a route using either manual legs JSON or by selecting a live journey planner proposal.
+  ```bash
+  # Format A: Save using manual legs JSON
+  python scripts/cli.py route save "Daily Commute" '[{"lines":["10"],"from":{"id":1001,"name":"Generic Stop A"},"to":{"id":1002,"name":"Generic Stop B"},"travel_time_minutes":15}]'
+
+  # Format B: Save transit legs dynamically from proposal option 1
+  python scripts/cli.py route save "Generic Stop A" "Generic Stop B" 1 "Daily Commute"
+
+  # Format C: Save direct start/stop connection without line constraints (proposal index 0)
+  python scripts/cli.py route save "Generic Stop A" "Generic Stop B" 0 "Daily Commute"
   ```
 - **Remove Favorite Route:** Remove a route by alias.
   ```bash
+  # Remove favorite route by name
   python scripts/cli.py route remove "Daily Commute"
   ```
 

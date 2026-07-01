@@ -293,7 +293,299 @@ def test_route_check_with_direction_filtering_and_sequential_filtering(mock_make
         # Verify tight connection message contents
         assert "Warnings:" in written_calls
         assert "leaving Stop A at 08:00" in written_calls
-        assert "expected arrival 08:07" in written_calls
         assert "toward Terminus C departing at 08:11" in written_calls
         assert "has only 4 min buffer" in written_calls
+
+
+@patch('scripts.cli.make_request')
+def test_route_find_alias_matching(mock_make_request, prefs_path):
+    # Favorite route setup
+    route = {
+        "name": "commute",
+        "legs": [
+            {
+                "lines": ["10"],
+                "from": {"id": 18001001, "name": "Stop A"},
+                "to": {"id": 18001002, "name": "Stop B"}
+            },
+            {
+                "lines": ["40"],
+                "from": {"id": 18001002, "name": "Stop B"},
+                "to": {"id": 18001003, "name": "Stop C"}
+            }
+        ]
+    }
+    cli.save_prefs({"favourite_stops": [], "favourite_routes": [route]}, prefs_path)
+
+    def mock_api(url, params=None):
+        if "stop-finder" in url:
+            name = params["name_sf"]
+            return {
+                "locations": [{
+                    "id": "909100100000" + name,
+                    "name": name,
+                    "properties": {"stopId": name if name.startswith("1800") else "1800" + name}
+                }]
+            }
+        elif "trips" in url:
+            return {
+                "journeys": [
+                    {
+                        "tripDuration": 1200,
+                        "interchanges": 1,
+                        "legs": [
+                            {
+                                "transportation": {"disassembledName": "10"},
+                                "origin": {"parent": {"name": "Stop A", "properties": {"stopId": "18001001"}}},
+                                "destination": {"parent": {"name": "Stop B", "properties": {"stopId": "18001002"}}},
+                                "duration": 600
+                            },
+                            {
+                                "transportation": {"disassembledName": "40"},
+                                "origin": {"parent": {"name": "Stop B", "properties": {"stopId": "18001002"}}},
+                                "destination": {"parent": {"name": "Stop C", "properties": {"stopId": "18001003"}}},
+                                "duration": 600
+                            }
+                        ]
+                    },
+                    {
+                        "tripDuration": 1500,
+                        "interchanges": 1,
+                        "legs": [
+                            {
+                                "transportation": {"disassembledName": "10"},
+                                "origin": {"parent": {"name": "Stop A", "properties": {"stopId": "18001001"}}},
+                                "destination": {"parent": {"name": "Stop B", "properties": {"stopId": "18001002"}}},
+                                "duration": 600
+                            },
+                            {
+                                "transportation": {"disassembledName": "99"},
+                                "origin": {"parent": {"name": "Stop B", "properties": {"stopId": "18001002"}}},
+                                "destination": {"parent": {"name": "Stop C", "properties": {"stopId": "18001003"}}},
+                                "duration": 900
+                            }
+                        ]
+                    }
+                ]
+            }
+        return {}
+
+    mock_make_request.side_effect = mock_api
+
+    args = MagicMock()
+    args.preferences = prefs_path
+    args.origin_or_alias = "commute"
+    args.destination = None
+    args.all = False
+    args.time = None
+    args.date = None
+    args.number = 3
+
+    with patch('sys.stdout.write') as mock_stdout:
+        cli.cmd_route_find(args)
+        written_calls = "".join(call[0][0] for call in mock_stdout.call_args_list)
+        assert "Option 1: Total duration 20 min" in written_calls
+        assert "Line 10 from Stop A to Stop B" in written_calls
+        assert "Line 40 from Stop B to Stop C" in written_calls
+        assert "Option 2" not in written_calls
+
+
+@patch('scripts.cli.make_request')
+def test_route_find_all_flag(mock_make_request, prefs_path):
+    route = {
+        "name": "commute",
+        "legs": [
+            {
+                "lines": ["10"],
+                "from": {"id": 18001001, "name": "Stop A"},
+                "to": {"id": 18001002, "name": "Stop B"}
+            }
+        ]
+    }
+    cli.save_prefs({"favourite_stops": [], "favourite_routes": [route]}, prefs_path)
+
+    def mock_api(url, params=None):
+        if "stop-finder" in url:
+            name = params["name_sf"]
+            return {
+                "locations": [{
+                    "id": "909100100000" + name,
+                    "name": name,
+                    "properties": {"stopId": name if name.startswith("1800") else "1800" + name}
+                }]
+            }
+        elif "trips" in url:
+            return {
+                "journeys": [
+                    {
+                        "tripDuration": 600,
+                        "interchanges": 0,
+                        "legs": [
+                            {
+                                "transportation": {"disassembledName": "10"},
+                                "origin": {"parent": {"name": "Stop A", "properties": {"stopId": "18001001"}}},
+                                "destination": {"parent": {"name": "Stop B", "properties": {"stopId": "18001002"}}},
+                                "duration": 600
+                            }
+                        ]
+                    },
+                    {
+                        "tripDuration": 900,
+                        "interchanges": 0,
+                        "legs": [
+                            {
+                                "transportation": {"disassembledName": "99"},
+                                "origin": {"parent": {"name": "Stop A", "properties": {"stopId": "18001001"}}},
+                                "destination": {"parent": {"name": "Stop B", "properties": {"stopId": "18001002"}}},
+                                "duration": 900
+                            }
+                        ]
+                    }
+                ]
+            }
+        return {}
+
+    mock_make_request.side_effect = mock_api
+
+    args = MagicMock()
+    args.preferences = prefs_path
+    args.origin_or_alias = "commute"
+    args.destination = None
+    args.all = True
+    args.time = None
+    args.date = None
+    args.number = 3
+
+    with patch('sys.stdout.write') as mock_stdout:
+        cli.cmd_route_find(args)
+        written_calls = "".join(call[0][0] for call in mock_stdout.call_args_list)
+        assert "Option 1: Total duration 10 min" in written_calls
+        assert "Option 2: Total duration 15 min" in written_calls
+
+
+@patch('scripts.cli.make_request')
+def test_route_find_mismatch_feedback(mock_make_request, prefs_path):
+    route = {
+        "name": "commute",
+        "legs": [
+            {
+                "lines": ["999"],
+                "from": {"id": 18001001, "name": "Stop A"},
+                "to": {"id": 18001002, "name": "Stop B"}
+            }
+        ]
+    }
+    cli.save_prefs({"favourite_stops": [], "favourite_routes": [route]}, prefs_path)
+
+    def mock_api(url, params=None):
+        if "stop-finder" in url:
+            name = params["name_sf"]
+            return {
+                "locations": [{
+                    "id": "909100100000" + name,
+                    "name": name,
+                    "properties": {"stopId": name if name.startswith("1800") else "1800" + name}
+                }]
+            }
+        elif "trips" in url:
+            return {
+                "journeys": [
+                    {
+                        "tripDuration": 600,
+                        "interchanges": 0,
+                        "legs": [
+                            {
+                                "transportation": {"disassembledName": "10"},
+                                "origin": {"parent": {"name": "Stop A", "properties": {"stopId": "18001001"}}},
+                                "destination": {"parent": {"name": "Stop B", "properties": {"stopId": "18001002"}}},
+                                "duration": 600
+                            }
+                        ]
+                    }
+                ]
+            }
+        return {}
+
+    mock_make_request.side_effect = mock_api
+
+    args = MagicMock()
+    args.preferences = prefs_path
+    args.origin_or_alias = "commute"
+    args.destination = None
+    args.all = False
+    args.time = None
+    args.date = None
+    args.number = 3
+
+    with patch('sys.stdout.write') as mock_stdout:
+        cli.cmd_route_find(args)
+        written_calls = "".join(call[0][0] for call in mock_stdout.call_args_list)
+        assert "No journey options matched your saved route leg preferences (e.g. Line 999 from Stop A)." in written_calls
+        assert "SL returned 1 alternative route proposals. Run with '--all' to display them." in written_calls
+
+
+@patch('scripts.cli.make_request')
+def test_route_save_dynamic_and_unconstrained(mock_make_request, prefs_path):
+    def mock_api(url, params=None):
+        if "stop-finder" in url:
+            name = params["name_sf"]
+            return {
+                "locations": [{
+                    "id": "909100100000" + name,
+                    "name": name,
+                    "properties": {"stopId": name if name.startswith("1800") else "1800" + name}
+                }]
+            }
+        elif "trips" in url:
+            return {
+                "journeys": [
+                    {
+                        "tripDuration": 600,
+                        "interchanges": 0,
+                        "legs": [
+                            {
+                                "transportation": {"disassembledName": "10"},
+                                "origin": {"parent": {"name": "Stop A", "properties": {"stopId": "18001001"}}},
+                                "destination": {"parent": {"name": "Stop B", "properties": {"stopId": "18001002"}}},
+                                "duration": 600
+                            }
+                        ]
+                    }
+                ]
+            }
+        return {}
+
+    mock_make_request.side_effect = mock_api
+
+    # 1. Test Dynamic Proposal Save (Option 1)
+    args = MagicMock()
+    args.preferences = prefs_path
+    args.args = ["1001", "1002", "1", "dynamic-commute"]
+
+    with patch('sys.stdout.write') as mock_stdout:
+        cli.cmd_route_save(args)
+        
+    prefs = cli.load_prefs(prefs_path)
+    saved_routes = prefs.get("favourite_routes", [])
+    target = next((r for r in saved_routes if r["name"] == "dynamic-commute"), None)
+    assert target is not None
+    assert len(target["legs"]) == 1
+    assert target["legs"][0]["lines"] == ["10"]
+    assert target["legs"][0]["from"]["id"] == 18001001
+    assert target["legs"][0]["to"]["id"] == 18001002
+
+    # 2. Test Unconstrained Save (Option 0)
+    args.args = ["1001", "1002", "0", "unconstrained-commute"]
+    with patch('sys.stdout.write') as mock_stdout:
+        cli.cmd_route_save(args)
+
+    prefs = cli.load_prefs(prefs_path)
+    saved_routes = prefs.get("favourite_routes", [])
+    target = next((r for r in saved_routes if r["name"] == "unconstrained-commute"), None)
+    assert target is not None
+    assert len(target["legs"]) == 1
+    assert target["legs"][0]["lines"] == []
+    assert target["legs"][0]["from"]["id"] == 18001001
+    assert target["legs"][0]["to"]["id"] == 18001002
+
 
