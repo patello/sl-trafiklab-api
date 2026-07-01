@@ -434,7 +434,7 @@ def cmd_route_find(args):
             else:
                 line = leg.get("transportation", {}).get("disassembledName")
                 direction = leg.get("transportation", {}).get("destination", {}).get("name")
-                dir_str = f" ({direction})" if direction else ""
+                dir_str = f" (toward {direction})" if direction else ""
                 sys.stdout.write(f"  Leg {transit_leg_idx}: Line {line} from {origin_name} to {dest_name}\n")
                 sys.stdout.write(f"    - {dep_str} -> {arr_str}{dir_str}\n")
                 transit_leg_idx += 1
@@ -793,7 +793,7 @@ def check_single_route(route, warnings, verbose=False):
                     arr_str = arr_parsed.strftime("%H:%M")
                     time_range_str = f"{expected_str} -> ~{arr_str}"
 
-                dest_str = f" ({dest})" if dest else ""
+                dest_str = f" (toward {dest})" if dest else ""
                 if display_str:
                     sys.stdout.write(f"  - {time_range_str}{dest_str} -- {display_str}\n")
                 else:

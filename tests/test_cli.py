@@ -280,11 +280,11 @@ def test_route_check_with_direction_filtering_and_sequential_filtering(mock_make
         
         # Verify departures printing
         assert "Leg 1: Line 10 from Stop A to Station B" in written_calls
-        assert "08:00 -> ~08:07 (Destination A)" in written_calls
+        assert "08:00 -> ~08:07 (toward Destination A)" in written_calls
         assert "Leg 2: Line 40, 41 from Station B to Stop C" in written_calls
         
         # Terminus C should be listed (valid connection >= 08:07 and correct direction)
-        assert "08:11 -> ~08:25 (Terminus C)" in written_calls
+        assert "08:11 -> ~08:25 (toward Terminus C)" in written_calls
         
         # Terminus A (wrong direction) and Terminus B early (before arrival time 08:07) should NOT be listed
         assert "Terminus A" not in written_calls
