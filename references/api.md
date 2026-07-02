@@ -9,6 +9,11 @@ The `sl-trafiklab-api` skill wraps the SL Integration and Deviations APIs using 
 The monitoring preferences file stores sites and multi-leg routes configured for autonomous background check notifications. It is loaded and modified using the `favorite` namespace commands.
 
 ### Format Example
+
+> [!NOTE]
+> - **`id`**: The short numeric **parent site ID** (e.g. `1386`, `9530`). This is required by the departures API and is used by `route check`.
+> - **`stop_id`** (optional): The platform/stop-point level ID (e.g. `18010957`). If present, it is used by `route find` to filter matching travel proposals.
+
 ```json
 {
   "favourite_stops": [

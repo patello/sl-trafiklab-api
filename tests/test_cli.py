@@ -571,8 +571,10 @@ def test_route_save_dynamic_and_unconstrained(mock_make_request, prefs_path):
     assert target is not None
     assert len(target["legs"]) == 1
     assert target["legs"][0]["lines"] == ["10"]
-    assert target["legs"][0]["from"]["id"] == 18001001
-    assert target["legs"][0]["to"]["id"] == 18001002
+    assert target["legs"][0]["from"]["id"] == 1001
+    assert target["legs"][0]["to"]["id"] == 1002
+    assert target["legs"][0]["from"]["stop_id"] == 1001
+    assert target["legs"][0]["to"]["stop_id"] == 1002
 
     # 2. Test Unconstrained Save (Option 0)
     args.args = ["1001", "1002", "0", "unconstrained-commute"]
@@ -585,7 +587,7 @@ def test_route_save_dynamic_and_unconstrained(mock_make_request, prefs_path):
     assert target is not None
     assert len(target["legs"]) == 1
     assert target["legs"][0]["lines"] == []
-    assert target["legs"][0]["from"]["id"] == 18001001
-    assert target["legs"][0]["to"]["id"] == 18001002
+    assert target["legs"][0]["from"]["id"] == 1001
+    assert target["legs"][0]["to"]["id"] == 1002
 
 

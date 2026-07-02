@@ -142,6 +142,11 @@ def extract_site_id(loc_node):
             stop_id = full_id[-8:]
         else:
             stop_id = full_id
+    
+    # Strip "1800" prefix from parent site IDs
+    if stop_id and stop_id.startswith("1800") and len(stop_id) > 4:
+        stop_id = stop_id[4:]
+        
     return stop_id
 
 
@@ -156,9 +161,27 @@ def extract_stop_name(loc_node):
         name = loc_node.get("disassembledName")
     if not name:
         name = loc_node.get("name")
-    if name and name.startswith("Stockholm, "):
-        name = name[len("Stockholm, "):]
+    if name:
+        if name.startswith("Stockholm, "):
+            name = name[len("Stockholm, "):]
+        if name.endswith(", Stockholm"):
+            name = name[:-len(", Stockholm")]
     return name or ""
+
+
+def clean_compare_name(name):
+    """Normalize station names by stripping locality suffixes and parenthetical details for robust matching."""
+    if not name:
+        return ""
+    name = str(name).strip()
+    if name.startswith("Stockholm, "):
+        name = name[len("Stockholm, "):]
+    if name.endswith(", Stockholm"):
+        name = name[:-len(", Stockholm")]
+    # Strip parenthetical parts like "(på Swedenborgsgatan)" or "(Rosenlundsg)"
+    import re
+    name = re.sub(r"\s*\(.*\)", "", name)
+    return name.strip().lower()
 
 
 def is_walk_leg(leg):
@@ -399,19 +422,33 @@ def cmd_route_find(args):
                         match = False
                         break
                     
-                    # 2. Match origin site ID
+                    # 2. Match origin site ID & Name
                     o_id = extract_site_id(p_leg.get("origin"))
                     s_from_id = str(s_leg.get("from", {}).get("id"))
-                    if not o_id or not (o_id.endswith(s_from_id) or s_from_id.endswith(o_id)):
-                        match = False
-                        break
+                    s_from_stop_id = str(s_leg.get("from", {}).get("stop_id", s_from_id))
                     
-                    # 3. Match destination site ID
+                    id_matched = o_id and (o_id.endswith(s_from_id) or s_from_id.endswith(o_id) or o_id == s_from_stop_id)
+                    if not id_matched:
+                        # Fallback to Cleaned Name Equality
+                        p_name = extract_stop_name(p_leg.get("origin"))
+                        s_name = s_leg.get("from", {}).get("name", "")
+                        if clean_compare_name(p_name) != clean_compare_name(s_name):
+                            match = False
+                            break
+                    
+                    # 3. Match destination site ID & Name
                     d_id = extract_site_id(p_leg.get("destination"))
                     s_to_id = str(s_leg.get("to", {}).get("id"))
-                    if not d_id or not (d_id.endswith(s_to_id) or s_to_id.endswith(d_id)):
-                        match = False
-                        break
+                    s_to_stop_id = str(s_leg.get("to", {}).get("stop_id", s_to_id))
+                    
+                    id_matched = d_id and (d_id.endswith(s_to_id) or s_to_id.endswith(d_id) or d_id == s_to_stop_id)
+                    if not id_matched:
+                        # Fallback to Cleaned Name Equality
+                        p_name = extract_stop_name(p_leg.get("destination"))
+                        s_name = s_leg.get("to", {}).get("name", "")
+                        if clean_compare_name(p_name) != clean_compare_name(s_name):
+                            match = False
+                            break
                 
                 if match:
                     displayed_journeys.append(j)
@@ -534,11 +571,24 @@ def cmd_route_save(args):
                     continue
                 line_desig = leg.get("transportation", {}).get("disassembledName")
                 o_id_str = extract_site_id(leg.get("origin"))
-                o_id = int(o_id_str) if o_id_str else 0
+                o_stop_id = int(o_id_str) if (o_id_str and o_id_str.isdigit()) else 0
                 o_name = extract_stop_name(leg.get("origin"))
                 d_id_str = extract_site_id(leg.get("destination"))
-                d_id = int(d_id_str) if d_id_str else 0
+                d_stop_id = int(d_id_str) if (d_id_str and d_id_str.isdigit()) else 0
                 d_name = extract_stop_name(leg.get("destination"))
+                
+                # Resolve parent site IDs for departures check compatibility
+                o_parent = resolve_stop(leg.get("origin", {}).get("name"))
+                o_parent_id_str = extract_site_id(o_parent)
+                o_parent_id = int(o_parent_id_str) if (o_parent_id_str and o_parent_id_str.isdigit()) else 0
+                if not o_parent_id:
+                    o_parent_id = o_stop_id
+
+                d_parent = resolve_stop(leg.get("destination", {}).get("name"))
+                d_parent_id_str = extract_site_id(d_parent)
+                d_parent_id = int(d_parent_id_str) if (d_parent_id_str and d_parent_id_str.isdigit()) else 0
+                if not d_parent_id:
+                    d_parent_id = d_stop_id
                 
                 # Calculate travel time in minutes
                 dep_time = parse_time(leg.get("origin", {}).get("departureTimeEstimated") or leg.get("origin", {}).get("departureTimePlanned"))
@@ -550,8 +600,8 @@ def cmd_route_save(args):
                 
                 legs.append({
                     "lines": [line_desig] if line_desig else [],
-                    "from": {"id": o_id, "name": o_name},
-                    "to": {"id": d_id, "name": d_name},
+                    "from": {"id": o_parent_id, "name": o_name, "stop_id": o_stop_id},
+                    "to": {"id": d_parent_id, "name": d_name, "stop_id": d_stop_id},
                     "travel_time_minutes": dur
                 })
             if not legs:
