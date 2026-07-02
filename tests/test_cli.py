@@ -591,3 +591,53 @@ def test_route_save_dynamic_and_unconstrained(mock_make_request, prefs_path):
     assert target["legs"][0]["to"]["id"] == 1002
 
 
+@patch('scripts.cli.make_request')
+def test_route_save_time_and_date_flags(mock_make_request, prefs_path):
+    called_params = []
+    def mock_api(url, params=None):
+        if "stop-finder" in url:
+            name = params["name_sf"]
+            return {
+                "locations": [{
+                    "id": "909100100000" + name,
+                    "name": name,
+                    "properties": {"stopId": "1800" + name}
+                }]
+            }
+        elif "trips" in url:
+            called_params.append(params)
+            return {
+                "journeys": [
+                    {
+                        "tripDuration": 600,
+                        "interchanges": 0,
+                        "legs": [
+                            {
+                                "transportation": {"disassembledName": "10"},
+                                "origin": {"parent": {"name": "Stop A", "properties": {"stopId": "18001001"}}},
+                                "destination": {"parent": {"name": "Stop B", "properties": {"stopId": "18001002"}}},
+                                "duration": 600
+                            }
+                        ]
+                    }
+                ]
+            }
+        return {}
+
+    mock_make_request.side_effect = mock_api
+
+    args = MagicMock()
+    args.preferences = prefs_path
+    args.args = ["1001", "1002", "1", "time-commute"]
+    args.time = "08:30"
+    args.date = "2026-07-02"
+
+    with patch('sys.stdout.write'):
+        cli.cmd_route_save(args)
+
+    assert len(called_params) == 1
+    assert called_params[0]["time"] == "08:30"
+    assert called_params[0]["date"] == "2026-07-02"
+
+
+

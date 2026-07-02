@@ -548,13 +548,18 @@ def cmd_route_save(args):
             o_location_id = origin_stop.get("id")
             d_location_id = dest_stop.get("id")
             url = f"{JOURNEY_API_URL}/trips"
-            res = make_request(url, {
+            params = {
                 "type_origin": "any",
                 "name_origin": o_location_id,
                 "type_destination": "any",
                 "name_destination": d_location_id,
                 "calc_number_of_trips": 3
-            })
+            }
+            if getattr(args, "time", None):
+                params["time"] = args.time
+            if getattr(args, "date", None):
+                params["date"] = args.date
+            res = make_request(url, params)
             if not res or not res.get("journeys"):
                 sys.stderr.write("Could not retrieve travel proposals from SL Journey Planner.\n")
                 sys.exit(1)
@@ -1090,6 +1095,8 @@ def main():
     p_route_save = route_sub.add_parser("save", help="Save favorite route")
     p_route_save.add_argument("args", nargs="+", help="Arguments: either <alias> <legs_json> OR <origin> <destination> <proposal_index> <alias>")
     p_route_save.add_argument("--preferences", help="Override preferences file path")
+    p_route_save.add_argument("--time", help="Optional travel time in HH:MM format for querying dynamic proposals")
+    p_route_save.add_argument("--date", help="Optional travel date in YYYY-MM-DD format for querying dynamic proposals")
 
     # route find
     p_route_find = route_sub.add_parser("find", help="Find travel proposals dynamically using SL Journey Planner")
