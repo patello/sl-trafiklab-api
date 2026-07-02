@@ -434,9 +434,9 @@ def cmd_route_find(args):
             else:
                 line = leg.get("transportation", {}).get("disassembledName")
                 direction = leg.get("transportation", {}).get("destination", {}).get("name")
-                dir_str = f" (toward {direction})" if direction else ""
-                sys.stdout.write(f"  Leg {transit_leg_idx}: Line {line} from {origin_name} to {dest_name}\n")
-                sys.stdout.write(f"    - {dep_str} -> {arr_str}{dir_str}\n")
+                dir_suffix = f" (toward {direction})" if direction else ""
+                sys.stdout.write(f"  Leg {transit_leg_idx}: Line {line}{dir_suffix} from {origin_name} to {dest_name}\n")
+                sys.stdout.write(f"    - {dep_str} -> {arr_str}\n")
                 transit_leg_idx += 1
 
 
@@ -752,8 +752,15 @@ def check_single_route(route, warnings, verbose=False):
         leg_departures.append(valid_deps)
 
         line_csv = ", ".join(str(l) for l in lines)
+        dir_pref = leg.get("direction")
+        dir_suffix = ""
+        if dir_pref:
+            if isinstance(dir_pref, list):
+                dir_suffix = f" (toward {', '.join(str(d) for d in dir_pref)})"
+            else:
+                dir_suffix = f" (toward {dir_pref})"
         to_name = leg.get("to", {}).get("name", "Destination")
-        sys.stdout.write(f"Leg {i+1}: Line {line_csv} from {from_name} to {to_name}\n")
+        sys.stdout.write(f"Leg {i+1}: Line {line_csv}{dir_suffix} from {from_name} to {to_name}\n")
         if not valid_deps:
             sys.stdout.write("  - No upcoming departures found\n")
         else:
@@ -793,11 +800,10 @@ def check_single_route(route, warnings, verbose=False):
                     arr_str = arr_parsed.strftime("%H:%M")
                     time_range_str = f"{expected_str} -> ~{arr_str}"
 
-                dest_str = f" (toward {dest})" if dest else ""
                 if display_str:
-                    sys.stdout.write(f"  - {time_range_str}{dest_str} -- {display_str}\n")
+                    sys.stdout.write(f"  - {time_range_str} -- {display_str}\n")
                 else:
-                    sys.stdout.write(f"  - {time_range_str}{dest_str}\n")
+                    sys.stdout.write(f"  - {time_range_str}\n")
 
         # Fetch deviations affecting this leg (site or line)
         dev_url = f"{DEVIATIONS_API_URL}/messages"
