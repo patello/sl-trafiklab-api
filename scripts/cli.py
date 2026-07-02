@@ -425,6 +425,30 @@ def cmd_route_find(args):
         params["type_not_via"] = "any"
         params["name_not_via"] = not_via_stop.get("id")
 
+    # Handle transport mode exclusions
+    exclude_arg = getattr(args, "exclude_modes", None)
+    exclude_val = exclude_arg if isinstance(exclude_arg, (str, int)) else None
+    if exclude_val:
+        MOT_ALIASES = {
+            "incl_mot_0": ("commuter", "train", "0", "pendeltåg", "pendeltag", "tåg", "tag"),
+            "incl_mot_2": ("metro", "subway", "2", "tunnelbana", "t-bana"),
+            "incl_mot_4": ("tram", "local", "4", "spårväg", "sparvag", "lokaltåg", "lokaltag"),
+            "incl_mot_5": ("bus", "5", "buss"),
+            "incl_mot_9": ("ship", "ferry", "9", "båt", "bat", "färja", "farja", "båttrafik", "battrafik"),
+            "incl_mot_10": ("ondemand", "10", "anropstrafik", "flex"),
+            "incl_mot_14": ("national", "14", "fjärrtåg", "fjarrtag"),
+            "incl_mot_19": ("accessible", "19", "närtrafik", "nartrafik"),
+        }
+        mode_map = {alias: mot for mot, aliases in MOT_ALIASES.items() for alias in aliases}
+        
+        excluded_tokens = [t.strip().lower() for t in str(exclude_val).split(",") if t.strip()]
+        for token in excluded_tokens:
+            if token not in mode_map:
+                valid_aliases = sorted(list(mode_map.keys()))
+                sys.stderr.write(f"Error: Invalid transport mode '{token}'. Valid modes are: {', '.join(valid_aliases)}\n")
+                sys.exit(1)
+            params[mode_map[token]] = "false"
+
     res = make_request(url, params)
     if not res or not res.get("journeys"):
         sys.stdout.write("No travel proposals found.\n")
@@ -1184,6 +1208,7 @@ def main():
     p_route_find.add_argument("--via", help="Optional intermediate stop name (e.g. 'Hornstull') or Site ID (e.g. 9192) to travel through")
     p_route_find.add_argument("--dwell-time", help="Optional dwell time at the via stop in HH:MM or HHMM format (e.g. 00:15 or 0015)")
     p_route_find.add_argument("--not-via", help="Optional stop name (e.g. 'Slussen') or Site ID (e.g. 9102) to avoid")
+    p_route_find.add_argument("--exclude-modes", help="Optional comma-separated list of transport modes to exclude (e.g. bus,metro,spårväg)")
 
     # route remove
     p_route_rem = route_sub.add_parser("remove", help="Remove favorite route")

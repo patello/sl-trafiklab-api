@@ -116,6 +116,9 @@ All commands are run using Python:
   # Search excluding/avoiding a specific station
   python scripts/cli.py route find "Generic Stop A" "Generic Stop B" --not-via "Avoided Stop"
 
+  # Search excluding/avoiding specific transport modes (e.g. buses and trams)
+  python scripts/cli.py route find "Generic Stop A" "Generic Stop B" --exclude-modes bus,tram
+
   # Search by alias, filtering options against saved leg constraints
   python scripts/cli.py route find "Daily Commute"
 
