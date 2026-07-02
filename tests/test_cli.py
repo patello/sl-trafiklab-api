@@ -640,4 +640,69 @@ def test_route_save_time_and_date_flags(mock_make_request, prefs_path):
     assert called_params[0]["date"] == "2026-07-02"
 
 
+@patch('scripts.cli.make_request')
+def test_route_save_consolidates_lines(mock_make_request, prefs_path):
+    def mock_api(url, params=None):
+        if "stop-finder" in url:
+            name = params["name_sf"]
+            return {
+                "locations": [{
+                    "id": "909100100000" + name,
+                    "name": name,
+                    "properties": {"stopId": "1800" + name}
+                }]
+            }
+        elif "trips" in url:
+            return {
+                "journeys": [
+                    {
+                        "tripDuration": 600,
+                        "interchanges": 0,
+                        "legs": [
+                            {
+                                "transportation": {"disassembledName": "10"},
+                                "origin": {"parent": {"name": "Stop A", "properties": {"stopId": "18001001"}}},
+                                "destination": {"parent": {"name": "Stop B", "properties": {"stopId": "18001002"}}},
+                                "duration": 600
+                            }
+                        ]
+                    },
+                    {
+                        "tripDuration": 650,
+                        "interchanges": 0,
+                        "legs": [
+                            {
+                                "transportation": {"disassembledName": "20"},
+                                "origin": {"parent": {"name": "Stop A", "properties": {"stopId": "18001001"}}},
+                                "destination": {"parent": {"name": "Stop B", "properties": {"stopId": "18001002"}}},
+                                "duration": 650
+                            }
+                        ]
+                    }
+                ]
+            }
+        return {}
+
+    mock_make_request.side_effect = mock_api
+
+    args = MagicMock()
+    args.preferences = prefs_path
+    args.args = ["1001", "1002", "1", "consolidated-commute"]
+    args.time = None
+    args.date = None
+
+    with patch('sys.stdout.write'):
+        cli.cmd_route_save(args)
+
+    prefs = cli.load_prefs(prefs_path)
+    saved_routes = prefs.get("favourite_routes", [])
+    target = next((r for r in saved_routes if r["name"] == "consolidated-commute"), None)
+    assert target is not None
+    assert len(target["legs"]) == 1
+    assert target["legs"][0]["lines"] == ["10", "20"]
+    assert target["legs"][0]["from"]["id"] == 1001
+    assert target["legs"][0]["to"]["id"] == 1002
+
+
+
 

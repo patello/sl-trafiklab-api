@@ -568,6 +568,28 @@ def cmd_route_save(args):
                 sys.stderr.write(f"Proposal index {proposal_index} out of range (available: 1-{len(journeys)}).\n")
                 sys.exit(1)
             
+            resolved_stops_cache = {}
+            def get_resolved_parent_id(stop_node):
+                if not stop_node:
+                    return 0
+                stop_name = stop_node.get("name")
+                if not stop_name:
+                    stop_id_str = extract_site_id(stop_node)
+                    return int(stop_id_str) if (stop_id_str and stop_id_str.isdigit()) else 0
+                
+                if stop_name in resolved_stops_cache:
+                    return resolved_stops_cache[stop_name]
+                
+                resolved = resolve_stop(stop_name)
+                resolved_id_str = extract_site_id(resolved)
+                resolved_id = int(resolved_id_str) if (resolved_id_str and resolved_id_str.isdigit()) else 0
+                if not resolved_id:
+                    stop_id_str = extract_site_id(stop_node)
+                    resolved_id = int(stop_id_str) if (stop_id_str and stop_id_str.isdigit()) else 0
+                
+                resolved_stops_cache[stop_name] = resolved_id
+                return resolved_id
+
             chosen_journey = journeys[proposal_index - 1]
             legs = []
             for leg in chosen_journey.get("legs", []):
@@ -583,18 +605,33 @@ def cmd_route_save(args):
                 d_name = extract_stop_name(leg.get("destination"))
                 
                 # Resolve parent site IDs for departures check compatibility
-                o_parent = resolve_stop(leg.get("origin", {}).get("name"))
-                o_parent_id_str = extract_site_id(o_parent)
-                o_parent_id = int(o_parent_id_str) if (o_parent_id_str and o_parent_id_str.isdigit()) else 0
+                o_parent_id = get_resolved_parent_id(leg.get("origin"))
                 if not o_parent_id:
                     o_parent_id = o_stop_id
 
-                d_parent = resolve_stop(leg.get("destination", {}).get("name"))
-                d_parent_id_str = extract_site_id(d_parent)
-                d_parent_id = int(d_parent_id_str) if (d_parent_id_str and d_parent_id_str.isdigit()) else 0
+                d_parent_id = get_resolved_parent_id(leg.get("destination"))
                 if not d_parent_id:
                     d_parent_id = d_stop_id
                 
+                # Scan all other journeys/legs for alternative transit lines covering this exact same stretch
+                lines_set = set()
+                if line_desig:
+                    lines_set.add(str(line_desig))
+                
+                for other_j in journeys:
+                    for other_leg in other_j.get("legs", []):
+                        if is_walk_leg(other_leg):
+                            continue
+                        other_o_parent_id = get_resolved_parent_id(other_leg.get("origin"))
+                        other_d_parent_id = get_resolved_parent_id(other_leg.get("destination"))
+                        
+                        if other_o_parent_id == o_parent_id and other_d_parent_id == d_parent_id:
+                            other_line = other_leg.get("transportation", {}).get("disassembledName")
+                            if other_line:
+                                lines_set.add(str(other_line))
+                
+                lines_list = sorted(list(lines_set), key=lambda x: int(x) if x.isdigit() else x)
+
                 # Calculate travel time in minutes
                 dep_time = parse_time(leg.get("origin", {}).get("departureTimeEstimated") or leg.get("origin", {}).get("departureTimePlanned"))
                 arr_time = parse_time(leg.get("destination", {}).get("arrivalTimeEstimated") or leg.get("destination", {}).get("arrivalTimePlanned"))
@@ -604,7 +641,7 @@ def cmd_route_save(args):
                     dur = 0
                 
                 legs.append({
-                    "lines": [line_desig] if line_desig else [],
+                    "lines": lines_list,
                     "from": {"id": o_parent_id, "name": o_name, "stop_id": o_stop_id},
                     "to": {"id": d_parent_id, "name": d_name, "stop_id": d_stop_id},
                     "travel_time_minutes": dur
