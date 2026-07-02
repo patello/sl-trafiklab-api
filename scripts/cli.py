@@ -384,9 +384,9 @@ def cmd_route_find(args):
         "calc_number_of_trips": args.number
     }
     if args.time:
-        params["time"] = args.time
+        params["itd_time"] = args.time.replace(":", "")
     if args.date:
-        params["date"] = args.date
+        params["itd_date"] = args.date.replace("-", "")
 
     res = make_request(url, params)
     if not res or not res.get("journeys"):
@@ -556,9 +556,9 @@ def cmd_route_save(args):
                 "calc_number_of_trips": 3
             }
             if getattr(args, "time", None):
-                params["time"] = args.time
+                params["itd_time"] = args.time.replace(":", "")
             if getattr(args, "date", None):
-                params["date"] = args.date
+                params["itd_date"] = args.date.replace("-", "")
             res = make_request(url, params)
             if not res or not res.get("journeys"):
                 sys.stderr.write("Could not retrieve travel proposals from SL Journey Planner.\n")

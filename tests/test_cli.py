@@ -636,8 +636,8 @@ def test_route_save_time_and_date_flags(mock_make_request, prefs_path):
         cli.cmd_route_save(args)
 
     assert len(called_params) == 1
-    assert called_params[0]["time"] == "08:30"
-    assert called_params[0]["date"] == "2026-07-02"
+    assert called_params[0]["itd_time"] == "0830"
+    assert called_params[0]["itd_date"] == "20260702"
 
 
 @patch('scripts.cli.make_request')
