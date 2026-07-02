@@ -121,11 +121,14 @@ All commands are run using Python:
   # Format A: Save using manual legs JSON
   python scripts/cli.py route save "Daily Commute" '[{"lines":["10"],"from":{"id":1001,"name":"Generic Stop A"},"to":{"id":1002,"name":"Generic Stop B"},"travel_time_minutes":15}]'
 
-  # Format B: Save transit legs dynamically from proposal option 1
-  python scripts/cli.py route save "Generic Stop A" "Generic Stop B" 1 "Daily Commute"
+  # Format B: Save transit legs dynamically from proposal option 1 (optionally specifying typical travel time/date)
+  python scripts/cli.py route save "Generic Stop A" "Generic Stop B" 1 "Daily Commute" --time "07:30" --date "2026-07-02"
 
   # Format C: Save direct start/stop connection without line constraints (proposal index 0)
   python scripts/cli.py route save "Generic Stop A" "Generic Stop B" 0 "Daily Commute"
+
+  > [!TIP]
+  > When saving a route dynamically (Format B), specifying the `--time` (and optionally `--date`) of your typical commute is recommended. This enables the CLI to query SL travel proposals at your actual travel time, automatically capturing typical travel durations and consolidating all alternative line numbers running on those legs at that hour (e.g. saving `["40", "41"]` for identical train stretches).
   ```
 - **Remove Favorite Route:** Remove a route by alias.
   ```bash
