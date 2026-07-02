@@ -27,8 +27,8 @@ All actions are performed by invoking `python scripts/cli.py`. For detailed comm
    - Commands: `python scripts/cli.py site save ...` / `python scripts/cli.py site remove ...`
 5. **route check**: Check connection safety buffer and print upcoming departures for each leg of a route (or all routes).
    - Command: `python scripts/cli.py route check [<alias>] [-v]`
-6. **route find**: Search travel proposals dynamically using SL's transit router, supporting alias inputs, custom departure times/dates, and leg preference matching.
-   - Command: `python scripts/cli.py route find <origin_or_alias> [<destination>] [--time <HH:MM>] [--date <YYYY-MM-DD>] [--number <1-3>] [--all]`
+6. **route find**: Search travel proposals dynamically using SL's transit router, supporting alias inputs, custom departure times/dates, leg preference matching, via stop details, and exclusions.
+   - Command: `python scripts/cli.py route find <origin_or_alias> [<destination>] [--time <HH:MM>] [--date <YYYY-MM-DD>] [--number <1-3>] [--all] [--via <via_stop>] [--dwell-time <HH:MM>] [--not-via <avoid_stop>]`
 7. **route save / remove**: Save or remove favorite routes in preferences. Supports manual JSON legs array or dynamic proposal-based saving (using optional `--time` and `--date` to query at your typical commute hour and consolidate alternative lines).
    - Commands: `python scripts/cli.py route save <origin> <destination> <proposal_index> <alias> [--time <HH:MM>] [--date <YYYY-MM-DD>]` / `python scripts/cli.py route remove ...`
 8. **deviations**: Fetch active or planned transit disruptions.

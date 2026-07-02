@@ -102,13 +102,19 @@ All commands are run using Python:
   python scripts/cli.py route check "Daily Commute" -v
   ```
 
-- **Find Travel Proposals:** Search dynamically for travel proposals using SL's routing engine. Supports alias resolving, future times, and leg-preference matching.
+- **Find Travel Proposals:** Search dynamically for travel proposals using SL's routing engine. Supports alias resolving, future times, leg-preference matching, via routing, and stop exclusions.
   ```bash
   # Search travel options between two stops
   python scripts/cli.py route find "Generic Stop A" "Generic Stop B"
 
   # Search future options
   python scripts/cli.py route find "Generic Stop A" "Generic Stop B" --time "08:00" --date "2026-07-02"
+
+  # Search via an intermediate stop with an optional dwell time
+  python scripts/cli.py route find "Generic Stop A" "Generic Stop B" --via "Generic Via Stop" --dwell-time "00:10"
+
+  # Search excluding/avoiding a specific station
+  python scripts/cli.py route find "Generic Stop A" "Generic Stop B" --not-via "Avoided Stop"
 
   # Search by alias, filtering options against saved leg constraints
   python scripts/cli.py route find "Daily Commute"

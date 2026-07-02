@@ -704,5 +704,134 @@ def test_route_save_consolidates_lines(mock_make_request, prefs_path):
     assert target["legs"][0]["to"]["id"] == 1002
 
 
+@patch('scripts.cli.make_request')
+def test_route_find_with_via_and_not_via(mock_make_request, prefs_path):
+    cli.save_prefs({"favourite_stops": [], "favourite_routes": []}, prefs_path)
+
+    def mock_api(url, params=None):
+        if "stop-finder" in url:
+            name = params["name_sf"]
+            return {
+                "locations": [{
+                    "id": "1800" + name,
+                    "name": name,
+                    "properties": {"stopId": "1800" + name}
+                }]
+            }
+        elif "trips" in url:
+            return {
+                "journeys": [
+                    {
+                        "tripDuration": 600,
+                        "interchanges": 0,
+                        "legs": [
+                            {
+                                "transportation": {"disassembledName": "10"},
+                                "origin": {"parent": {"name": "Stop A", "properties": {"stopId": "18001001"}}},
+                                "destination": {"parent": {"name": "Stop B", "properties": {"stopId": "18001002"}}},
+                                "duration": 600
+                            }
+                        ]
+                    }
+                ]
+            }
+        return {}
+
+    mock_make_request.side_effect = mock_api
+
+    args = MagicMock()
+    args.preferences = prefs_path
+    args.origin_or_alias = "Stop A"
+    args.destination = "Stop B"
+    args.all = False
+    args.time = None
+    args.date = None
+    args.number = 3
+    args.via = "Stop V"
+    args.dwell_time = "00:15"
+    args.not_via = "Stop N"
+
+    with patch('sys.stdout.write'):
+        cli.cmd_route_find(args)
+
+    trips_call = next(call for call in mock_make_request.call_args_list if "trips" in call[0][0])
+    trips_params = trips_call[0][1]
+    assert trips_params["type_via"] == "any"
+    assert trips_params["name_via"] == "1800Stop V"
+    assert trips_params["dwell_time"] == "0015"
+    assert trips_params["type_not_via"] == "any"
+    assert trips_params["name_not_via"] == "1800Stop N"
+
+
+@patch('scripts.cli.make_request')
+def test_route_find_dwell_time_requires_via(mock_make_request, prefs_path):
+    cli.save_prefs({"favourite_stops": [], "favourite_routes": []}, prefs_path)
+
+    def mock_api(url, params=None):
+        if "stop-finder" in url:
+            name = params["name_sf"]
+            return {
+                "locations": [{
+                    "id": "1800" + name,
+                    "name": name,
+                    "properties": {"stopId": "1800" + name}
+                }]
+            }
+        return {}
+    mock_make_request.side_effect = mock_api
+
+    args = MagicMock()
+    args.preferences = prefs_path
+    args.origin_or_alias = "Stop A"
+    args.destination = "Stop B"
+    args.all = False
+    args.time = None
+    args.date = None
+    args.number = 3
+    args.via = None
+    args.dwell_time = "00:15"
+    args.not_via = None
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.cmd_route_find(args)
+    assert excinfo.value.code == 1
+
+
+@patch('scripts.cli.make_request')
+def test_route_find_unresolved_via(mock_make_request, prefs_path):
+    cli.save_prefs({"favourite_stops": [], "favourite_routes": []}, prefs_path)
+
+    def mock_api(url, params=None):
+        if "stop-finder" in url:
+            name = params["name_sf"]
+            if name == "Stop V":
+                return {}
+            return {
+                "locations": [{
+                    "id": "1800" + name,
+                    "name": name,
+                    "properties": {"stopId": "1800" + name}
+                }]
+            }
+        return {}
+    mock_make_request.side_effect = mock_api
+
+    args = MagicMock()
+    args.preferences = prefs_path
+    args.origin_or_alias = "Stop A"
+    args.destination = "Stop B"
+    args.all = False
+    args.time = None
+    args.date = None
+    args.number = 3
+    args.via = "Stop V"
+    args.dwell_time = None
+    args.not_via = None
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.cmd_route_find(args)
+    assert excinfo.value.code == 1
+
+
 
 

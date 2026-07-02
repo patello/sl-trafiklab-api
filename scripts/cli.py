@@ -375,6 +375,30 @@ def cmd_route_find(args):
         sys.stderr.write(f"Could not resolve destination stop: {dest_name}\n")
         sys.exit(1)
 
+    # Safely extract and resolve via & not-via optional stops (handling Mock environments)
+    via_arg = getattr(args, "via", None)
+    via_val = via_arg if isinstance(via_arg, (str, int)) else None
+
+    dwell_arg = getattr(args, "dwell_time", None)
+    dwell_val = dwell_arg if isinstance(dwell_arg, (str, int)) else None
+
+    not_via_arg = getattr(args, "not_via", None)
+    not_via_val = not_via_arg if isinstance(not_via_arg, (str, int)) else None
+
+    via_stop = None
+    if via_val:
+        via_stop = resolve_stop(via_val)
+        if not via_stop:
+            sys.stderr.write(f"Could not resolve via stop: {via_val}\n")
+            sys.exit(1)
+
+    not_via_stop = None
+    if not_via_val:
+        not_via_stop = resolve_stop(not_via_val)
+        if not not_via_stop:
+            sys.stderr.write(f"Could not resolve not-via stop: {not_via_val}\n")
+            sys.exit(1)
+
     url = f"{JOURNEY_API_URL}/trips"
     params = {
         "type_origin": "any",
@@ -387,6 +411,19 @@ def cmd_route_find(args):
         params["itd_time"] = args.time.replace(":", "")
     if args.date:
         params["itd_date"] = args.date.replace("-", "")
+
+    if via_stop:
+        params["type_via"] = "any"
+        params["name_via"] = via_stop.get("id")
+        if dwell_val:
+            params["dwell_time"] = str(dwell_val).replace(":", "")
+    elif dwell_val:
+        sys.stderr.write("Error: --dwell-time requires --via to be specified.\n")
+        sys.exit(1)
+
+    if not_via_stop:
+        params["type_not_via"] = "any"
+        params["name_not_via"] = not_via_stop.get("id")
 
     res = make_request(url, params)
     if not res or not res.get("journeys"):
@@ -1144,6 +1181,9 @@ def main():
     p_route_find.add_argument("--time", help="Optional travel time in HH:MM format")
     p_route_find.add_argument("--date", help="Optional travel date in YYYY-MM-DD format")
     p_route_find.add_argument("--number", type=int, default=3, choices=[1, 2, 3], help="Number of travel options to return (1-3)")
+    p_route_find.add_argument("--via", help="Optional intermediate stop name (e.g. 'Hornstull') or Site ID (e.g. 9192) to travel through")
+    p_route_find.add_argument("--dwell-time", help="Optional dwell time at the via stop in HH:MM or HHMM format (e.g. 00:15 or 0015)")
+    p_route_find.add_argument("--not-via", help="Optional stop name (e.g. 'Slussen') or Site ID (e.g. 9102) to avoid")
 
     # route remove
     p_route_rem = route_sub.add_parser("remove", help="Remove favorite route")
