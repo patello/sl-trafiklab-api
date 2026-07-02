@@ -11,9 +11,26 @@ import os
 import json
 import urllib.request
 import urllib.parse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
-# API Base URLs
+
+def get_stockholm_now():
+    """Get the current datetime in Europe/Stockholm timezone, zero-dependency."""
+    utc_now = datetime.now(timezone.utc).replace(tzinfo=None)
+    year = utc_now.year
+    
+    # CEST starts last Sunday of March at 01:00 UTC
+    march_31 = datetime(year, 3, 31, 1, 0, 0)
+    march_transition = march_31 - timedelta(days=(march_31.weekday() + 1) % 7)
+    
+    # CEST ends last Sunday of October at 01:00 UTC
+    oct_31 = datetime(year, 10, 31, 1, 0, 0)
+    oct_transition = oct_31 - timedelta(days=(oct_31.weekday() + 1) % 7)
+    
+    if march_transition <= utc_now < oct_transition:
+        return utc_now + timedelta(hours=2) # UTC+2 (CEST)
+    else:
+        return utc_now + timedelta(hours=1) # UTC+1 (CET)
 TRANSPORT_API_URL = "https://transport.integration.sl.se/v1"
 DEVIATIONS_API_URL = "https://deviations.integration.sl.se/v1"
 
@@ -764,7 +781,7 @@ def check_single_route(route, warnings, verbose=False):
         if not valid_deps:
             sys.stdout.write("  - No upcoming departures found\n")
         else:
-            now_time = datetime.now()
+            now_time = get_stockholm_now()
             for dep in valid_deps[:3]:
                 dest = dep.get("destination", "")
                 sched = dep.get("scheduled", "")
