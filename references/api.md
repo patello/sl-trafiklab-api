@@ -122,7 +122,7 @@ All commands are run using Python:
   # Bypass leg constraints to see all transit alternatives between alias terminals
   python scripts/cli.py route find "Daily Commute" --all
   ```
-- **Save Favorite Route:** Add or update a route using either manual legs JSON or by selecting a live journey planner proposal.
+- **Save Favorite Route:** Add or update a route using either manual legs JSON, selecting a specific journey proposal, or saving a start-to-destination connection.
   ```bash
   # Format A: Save using manual legs JSON
   python scripts/cli.py route save "Daily Commute" '[{"lines":["10"],"from":{"id":1001,"name":"Generic Stop A"},"to":{"id":1002,"name":"Generic Stop B"},"travel_time_minutes":15}]'
@@ -133,8 +133,11 @@ All commands are run using Python:
   # Format C: Save direct start/stop connection without line constraints (proposal index 0)
   python scripts/cli.py route save "Generic Stop A" "Generic Stop B" 0 "Daily Commute"
 
+  # Format D: Save start/stop connection using the new default 3-argument syntax (equivalent to index 0)
+  python scripts/cli.py route save "Generic Stop A" "Generic Stop B" "Daily Commute"
+
   > [!TIP]
-  > When saving a route dynamically (Format B), specifying the `--time` (and optionally `--date`) of your typical commute is recommended. This enables the CLI to query SL travel proposals at your actual travel time, automatically capturing typical travel durations and consolidating all alternative line numbers running on those legs at that hour (e.g. saving `["40", "41"]` for identical train stretches).
+  > Saving via Format C/D (default/index 0) queries the Journey Planner under the hood. It automatically configures typical travel duration (from the first option), collects and consolidates direct line numbers, and configures direction filters to avoid noise. If no travel options are found, it falls back to saving with empty line lists and 0 travel time.
   ```
 - **Remove Favorite Route:** Remove a route by alias.
   ```bash

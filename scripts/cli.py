@@ -154,13 +154,17 @@ def extract_stop_name(loc_node):
     """Extract and clean stop name from location node."""
     if not loc_node:
         return ""
-    name = loc_node.get("parent", {}).get("disassembledName")
-    if not name:
-        name = loc_node.get("parent", {}).get("name")
+    
+    parent = loc_node.get("parent", {})
+    name = None
+    if parent and parent.get("type") != "locality":
+        name = parent.get("disassembledName") or parent.get("name")
+        
     if not name:
         name = loc_node.get("disassembledName")
     if not name:
         name = loc_node.get("name")
+        
     if name:
         if name.startswith("Stockholm, "):
             name = name[len("Stockholm, "):]
@@ -546,15 +550,19 @@ def cmd_route_save(args):
         except Exception as e:
             sys.stderr.write(f"Invalid legs JSON: {e}\n")
             sys.exit(1)
-    elif len(args.args) == 4:
+    elif len(args.args) in (3, 4):
         origin = args.args[0]
         destination = args.args[1]
-        try:
-            proposal_index = int(args.args[2])
-        except ValueError:
-            sys.stderr.write("Proposal index must be an integer.\n")
-            sys.exit(1)
-        name = args.args[3]
+        if len(args.args) == 3:
+            proposal_index = 0
+            name = args.args[2]
+        else:
+            try:
+                proposal_index = int(args.args[2])
+            except ValueError:
+                sys.stderr.write("Proposal index must be an integer.\n")
+                sys.exit(1)
+            name = args.args[3]
 
         # Resolve origin and destination stops
         origin_stop = resolve_stop(origin)
@@ -566,6 +574,28 @@ def cmd_route_save(args):
             sys.stderr.write(f"Could not resolve destination stop: {destination}\n")
             sys.exit(1)
 
+        resolved_stops_cache = {}
+        def get_resolved_parent_id(stop_node):
+            if not stop_node:
+                return 0
+            stop_name = stop_node.get("name")
+            if not stop_name:
+                stop_id_str = extract_site_id(stop_node)
+                return int(stop_id_str) if (stop_id_str and stop_id_str.isdigit()) else 0
+            
+            if stop_name in resolved_stops_cache:
+                return resolved_stops_cache[stop_name]
+            
+            resolved = resolve_stop(stop_name)
+            resolved_id_str = extract_site_id(resolved)
+            resolved_id = int(resolved_id_str) if (resolved_id_str and resolved_id_str.isdigit()) else 0
+            if not resolved_id:
+                stop_id_str = extract_site_id(stop_node)
+                resolved_id = int(stop_id_str) if (stop_id_str and stop_id_str.isdigit()) else 0
+            
+            resolved_stops_cache[stop_name] = resolved_id
+            return resolved_id
+
         if proposal_index == 0:
             # Save unconstrained direct start/stop connection
             o_id_str = extract_site_id(origin_stop)
@@ -574,12 +604,58 @@ def cmd_route_save(args):
             d_id_str = extract_site_id(dest_stop)
             d_id = int(d_id_str) if d_id_str else 0
             d_name = extract_stop_name(dest_stop)
+            
             legs = [{
                 "lines": [],
                 "from": {"id": o_id, "name": o_name},
                 "to": {"id": d_id, "name": d_name},
                 "travel_time_minutes": 0
             }]
+
+            # Try to query trips to get travel duration and line information
+            o_location_id = origin_stop.get("id")
+            d_location_id = dest_stop.get("id")
+            url = f"{JOURNEY_API_URL}/trips"
+            params = {
+                "type_origin": "any",
+                "name_origin": o_location_id,
+                "type_destination": "any",
+                "name_destination": d_location_id,
+                "calc_number_of_trips": 3
+            }
+            if getattr(args, "time", None):
+                params["itd_time"] = args.time.replace(":", "")
+            if getattr(args, "date", None):
+                params["itd_date"] = args.date.replace("-", "")
+
+            res = make_request(url, params)
+            if res and res.get("journeys"):
+                journeys = res.get("journeys", [])
+                if journeys:
+                    # 1. Use the duration of the first option as the travel time
+                    first_journey = journeys[0]
+                    duration = first_journey.get("tripRtDuration") or first_journey.get("tripDuration") or 0
+                    duration_mins = int(duration / 60)
+                    legs[0]["travel_time_minutes"] = duration_mins
+
+                    # 2. Consolidate lines and directions of the first transit leg across all journey options
+                    lines_set = set()
+                    direction_set = set()
+                    for j in journeys:
+                        transit_legs = [leg for leg in j.get("legs", []) if not is_walk_leg(leg)]
+                        if transit_legs:
+                            leg = transit_legs[0]
+                            line_desig = leg.get("transportation", {}).get("disassembledName")
+                            if line_desig:
+                                lines_set.add(str(line_desig))
+                            direction = leg.get("transportation", {}).get("destination", {}).get("name")
+                            if direction:
+                                direction_set.add(str(direction))
+
+                    if lines_set:
+                        legs[0]["lines"] = sorted(list(lines_set), key=lambda x: int(x) if x.isdigit() else x)
+                    if direction_set:
+                        legs[0]["direction"] = sorted(list(direction_set))
         else:
             # Query Trips
             o_location_id = origin_stop.get("id")
@@ -605,28 +681,6 @@ def cmd_route_save(args):
                 sys.stderr.write(f"Proposal index {proposal_index} out of range (available: 1-{len(journeys)}).\n")
                 sys.exit(1)
             
-            resolved_stops_cache = {}
-            def get_resolved_parent_id(stop_node):
-                if not stop_node:
-                    return 0
-                stop_name = stop_node.get("name")
-                if not stop_name:
-                    stop_id_str = extract_site_id(stop_node)
-                    return int(stop_id_str) if (stop_id_str and stop_id_str.isdigit()) else 0
-                
-                if stop_name in resolved_stops_cache:
-                    return resolved_stops_cache[stop_name]
-                
-                resolved = resolve_stop(stop_name)
-                resolved_id_str = extract_site_id(resolved)
-                resolved_id = int(resolved_id_str) if (resolved_id_str and resolved_id_str.isdigit()) else 0
-                if not resolved_id:
-                    stop_id_str = extract_site_id(stop_node)
-                    resolved_id = int(stop_id_str) if (stop_id_str and stop_id_str.isdigit()) else 0
-                
-                resolved_stops_cache[stop_name] = resolved_id
-                return resolved_id
-
             chosen_journey = journeys[proposal_index - 1]
             legs = []
             for leg in chosen_journey.get("legs", []):
@@ -687,7 +741,7 @@ def cmd_route_save(args):
                 sys.stderr.write("No transit legs found in selected travel proposal.\n")
                 sys.exit(1)
     else:
-        sys.stderr.write("Error: save subcommand expects either 2 or 4 positional arguments.\n")
+        sys.stderr.write("Error: save subcommand expects either 2, 3, or 4 positional arguments.\n")
         sys.exit(1)
 
     # Remove existing route by name
@@ -898,6 +952,7 @@ def check_single_route(route, warnings, verbose=False):
         leg_departures.append(valid_deps)
 
         line_csv = ", ".join(str(l) for l in lines)
+        line_desc = f"Line {line_csv}" if lines else "Any Line"
         dir_pref = leg.get("direction")
         dir_suffix = ""
         if dir_pref:
@@ -906,7 +961,7 @@ def check_single_route(route, warnings, verbose=False):
             else:
                 dir_suffix = f" (toward {dir_pref})"
         to_name = leg.get("to", {}).get("name", "Destination")
-        sys.stdout.write(f"Leg {i+1}: Line {line_csv}{dir_suffix} from {from_name} to {to_name}\n")
+        sys.stdout.write(f"Leg {i+1}: {line_desc}{dir_suffix} from {from_name} to {to_name}\n")
         if not valid_deps:
             sys.stdout.write("  - No upcoming departures found\n")
         else:
@@ -946,10 +1001,13 @@ def check_single_route(route, warnings, verbose=False):
                     arr_str = arr_parsed.strftime("%H:%M")
                     time_range_str = f"{expected_str} -> ~{arr_str}"
 
+                line_no = dep.get("line", {}).get("designation", "")
+                line_prefix = f"Line {line_no} to {dest}: " if line_no else ""
+
                 if display_str:
-                    sys.stdout.write(f"  - {time_range_str} -- {display_str}\n")
+                    sys.stdout.write(f"  - {line_prefix}{time_range_str} -- {display_str}\n")
                 else:
-                    sys.stdout.write(f"  - {time_range_str}\n")
+                    sys.stdout.write(f"  - {line_prefix}{time_range_str}\n")
 
         # Fetch deviations affecting this leg (site or line)
         dev_url = f"{DEVIATIONS_API_URL}/messages"
@@ -1167,7 +1225,7 @@ def main():
 
     # route save
     p_route_save = route_sub.add_parser("save", help="Save favorite route")
-    p_route_save.add_argument("args", nargs="+", help="Arguments: either <alias> <legs_json> OR <origin> <destination> <proposal_index> <alias>")
+    p_route_save.add_argument("args", nargs="+", help="Arguments: either <alias> <legs_json> OR <origin> <destination> [<proposal_index>] <alias>")
     p_route_save.add_argument("--preferences", help="Override preferences file path")
     p_route_save.add_argument("--time", help="Optional travel time in HH:MM format for querying dynamic proposals")
     p_route_save.add_argument("--date", help="Optional travel date in YYYY-MM-DD format for querying dynamic proposals")

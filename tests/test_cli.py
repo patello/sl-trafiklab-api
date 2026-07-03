@@ -576,7 +576,7 @@ def test_route_save_dynamic_and_unconstrained(mock_make_request, prefs_path):
     assert target["legs"][0]["from"]["stop_id"] == 1001
     assert target["legs"][0]["to"]["stop_id"] == 1002
 
-    # 2. Test Unconstrained Save (Option 0)
+    # 2. Test Unconstrained Save (Option 0 - augmented with duration and lines)
     args.args = ["1001", "1002", "0", "unconstrained-commute"]
     with patch('sys.stdout.write') as mock_stdout:
         cli.cmd_route_save(args)
@@ -586,7 +586,51 @@ def test_route_save_dynamic_and_unconstrained(mock_make_request, prefs_path):
     target = next((r for r in saved_routes if r["name"] == "unconstrained-commute"), None)
     assert target is not None
     assert len(target["legs"]) == 1
+    assert target["legs"][0]["lines"] == ["10"]
+    assert target["legs"][0]["travel_time_minutes"] == 10
+    assert target["legs"][0]["from"]["id"] == 1001
+    assert target["legs"][0]["to"]["id"] == 1002
+
+    # 3. Test 3-argument syntax (equivalent to option 0)
+    args.args = ["1001", "1002", "three-args-commute"]
+    with patch('sys.stdout.write') as mock_stdout:
+        cli.cmd_route_save(args)
+
+    prefs = cli.load_prefs(prefs_path)
+    saved_routes = prefs.get("favourite_routes", [])
+    target = next((r for r in saved_routes if r["name"] == "three-args-commute"), None)
+    assert target is not None
+    assert len(target["legs"]) == 1
+    assert target["legs"][0]["lines"] == ["10"]
+    assert target["legs"][0]["travel_time_minutes"] == 10
+    assert target["legs"][0]["from"]["id"] == 1001
+    assert target["legs"][0]["to"]["id"] == 1002
+
+    # 4. Test fallback to unconstrained default (when API returns no journeys)
+    def mock_api_empty(url, params=None):
+        if "stop-finder" in url:
+            name = params["name_sf"]
+            return {
+                "locations": [{
+                    "id": "909100100000" + name,
+                    "name": name,
+                    "properties": {"stopId": name if name.startswith("1800") else "1800" + name}
+                }]
+            }
+        return {} # Returns no journeys/trips
+    
+    mock_make_request.side_effect = mock_api_empty
+    args.args = ["1001", "1002", "fallback-commute"]
+    with patch('sys.stdout.write') as mock_stdout:
+        cli.cmd_route_save(args)
+
+    prefs = cli.load_prefs(prefs_path)
+    saved_routes = prefs.get("favourite_routes", [])
+    target = next((r for r in saved_routes if r["name"] == "fallback-commute"), None)
+    assert target is not None
+    assert len(target["legs"]) == 1
     assert target["legs"][0]["lines"] == []
+    assert target["legs"][0]["travel_time_minutes"] == 0
     assert target["legs"][0]["from"]["id"] == 1001
     assert target["legs"][0]["to"]["id"] == 1002
 
