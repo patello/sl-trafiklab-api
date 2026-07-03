@@ -27,6 +27,13 @@ This will automatically download the skill assets into your workspace's `skills/
 
 ---
 
+## Known API Limitations
+
+> [!WARNING]
+> - **Mode Exclusions (`--exclude-modes`)**: While the CLI implementation is fully spec-compliant (correctly mapping exclusions to the `incl_mot_X` query parameters), the underlying SL/Trafiklab backend routing engine currently ignores these parameters on the server side. As a result, travel proposals containing excluded transport modes are still returned by the API.
+
+---
+
 ## Automated Publishing
 
 This repository is configured with a automated GitHub Action workflow (`.github/workflows/clawhub-publish.yml`) to publish releases to the ClawHub registry.
