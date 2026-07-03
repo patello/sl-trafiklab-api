@@ -4,9 +4,9 @@ The `sl-trafiklab-api` skill wraps the SL Integration and Deviations APIs using 
 
 ---
 
-## State Storage (`.sl/preferences.json`)
+## Favorites Storage (`.sl/preferences.json`)
 
-The monitoring preferences file stores sites and multi-leg routes configured for autonomous background check notifications. It is loaded and modified using the `favorite` namespace commands.
+The preferences file stores favorite stops and multi-leg routes. It is loaded and modified using the favorite commands.
 
 ### Format Example
 
@@ -133,12 +133,19 @@ All commands are run using Python:
   # Format C: Save direct start/stop connection without line constraints (proposal index 0)
   python scripts/cli.py route save "Generic Stop A" "Generic Stop B" 0 "Daily Commute"
 
-  # Format D: Save start/stop connection using the new default 3-argument syntax (equivalent to index 0)
+  # Format D: Save start/stop connection using the default signature (origin, destination, and alias) (equivalent to index 0)
   python scripts/cli.py route save "Generic Stop A" "Generic Stop B" "Daily Commute"
+  ```
 
   > [!TIP]
   > Saving via Format C/D (default/index 0) queries the Journey Planner under the hood. It automatically configures typical travel duration (from the first option), collects and consolidates direct line numbers, and configures direction filters to avoid noise. If no travel options are found, it falls back to saving with empty line lists and 0 travel time.
-  ```
+
+  > [!IMPORTANT]
+  > **Workflow for saving a route with specific constraints (like a line number or transfer path):**
+  > To save a route that satisfies specific constraints (e.g., must use Line 10, or must follow a specific transfer path), use `route find` followed by `route save`:
+  > 1. Run `python scripts/cli.py route find "<origin>" "<destination>" [--time <HH:MM>] [--date <YYYY-MM-DD>]` to list travel proposals.
+  > 2. Look at the output options and choose the one that matches your requirements (e.g., Option 2 uses Line 10).
+  > 3. Save using that option index (Format B, passing the option index along with the exact same time/date parameters to ensure option alignment): `python scripts/cli.py route save "<origin>" "<destination>" <option_index> "<alias>" [--time <HH:MM>] [--date <YYYY-MM-DD>]` (e.g., `python scripts/cli.py route save "Generic Stop A" "Generic Stop B" 2 "Daily Commute" --time "07:30" --date "2026-07-02"`).
 - **Remove Favorite Route:** Remove a route by alias.
   ```bash
   # Remove favorite route by name
