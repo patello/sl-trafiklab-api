@@ -1166,6 +1166,20 @@ def cmd_route_check(args):
 # Main Parser
 # =====================================================================
 
+def _validate_direction(value):
+    """Validate --direction argument: accept numeric codes 1 or 2, reject destination names with a clear error."""
+    try:
+        v = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"'{value}' is not a valid direction. --direction accepts numeric codes only (1 or 2), "
+            f"not destination names like 'Märsta' or 'Uppsala C'."
+        )
+    if v not in (1, 2):
+        raise argparse.ArgumentTypeError(f"{v} is not a valid direction code. Use 1 or 2.")
+    return v
+
+
 def main():
     parser = argparse.ArgumentParser(description="SL Trafiklab CLI Tool")
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
@@ -1184,7 +1198,7 @@ def main():
     p_dep.add_argument("site_id", help="Numeric Site ID")
     p_dep.add_argument("--line", help="Filter by line designation")
     p_dep.add_argument("--transport", help="Filter by transport mode (BUS, METRO, TRAIN, etc.)")
-    p_dep.add_argument("--direction", type=int, choices=[1, 2], help="Filter by direction code")
+    p_dep.add_argument("--direction", type=lambda v: _validate_direction(v), help="Filter by direction code (1 or 2). Numeric codes only — do NOT pass destination names like 'Märsta'.")
     p_dep.add_argument("--forecast", type=int, help="Forecast window in minutes")
 
     # site check
