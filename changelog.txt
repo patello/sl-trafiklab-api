@@ -1,0 +1,2 @@
+- docs: align SKILL.md and references/api.md CLI paths to the ClawHub-installed layout (skills/sl-trafiklab-api/scripts/cli.py) and normalize to python3
+- chore: bump version to 3.6.0
