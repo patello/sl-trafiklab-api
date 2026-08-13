@@ -26,6 +26,8 @@ The `--direction` flag on `site departures` accepts **numeric codes only** (`1` 
 ### `route find` Time Output
 `route find` returns departure and arrival times in **UTC**. Always convert to the user's local timezone (Europe/Stockholm) before presenting results.
 
+The `--time` and `--date` **inputs** are interpreted as **Stockholm local time** (i.e. `--time 15:00` means a 15:00 local departure), while the returned leg times are UTC. Do not confuse the two: with summer time (CEST, UTC+2), a `--time 12:00` request may show first legs around 10:00 UTC on screen — that is correct, not a bug.
+
 ## Core Actions
 All actions are performed by invoking `python3 scripts/cli.py`. For detailed command arguments and response layouts, refer to **`references/api.md`**.
 

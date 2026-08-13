@@ -122,6 +122,8 @@ All commands are run using Python:
   # Bypass leg constraints to see all transit alternatives between alias terminals
   python scripts/cli.py route find "Daily Commute" --all
   ```
+
+The `--time` and `--date` inputs are **Stockholm local time** (e.g. `--time "08:00"` = 08:00 local departure), but the returned leg times are **UTC**. During summer time (CEST, UTC+2) a `--time "08:00"` request therefore surfaces legs around 06:00 UTC on screen — that is expected. Always convert returned times to the user's local timezone (Europe/Stockholm) before presenting.
 - **Save Favorite Route:** Add or update a route using either manual legs JSON, selecting a specific journey proposal, or saving a start-to-destination connection.
   ```bash
   # Format A: Save using manual legs JSON
