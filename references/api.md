@@ -73,6 +73,18 @@ All commands are run using Python:
   python3 skills/sl-trafiklab-api/scripts/cli.py site departures 9117 --line 4 --transport BUS
   ```
 
+  > **Note — lookahead window and line filtering:** `site departures` returns a live
+  > subset of upcoming departures, roughly the next hour (the SL transport API's
+  > lookahead window). When you filter with `--line` and/or `--direction`, the CLI
+  > fetches the full board and filters **locally** to avoid the API's server-side
+  > cap (filtered requests return only a small subset, ~3 rows, regardless of any
+  > limit parameter). It still returns at most the API's ~1-hour window, so for a
+  > complete schedule — or departures beyond the immediate lookahead — use
+  > `route find` (journey planner) instead.
+  >
+  > `--direction` filters by numeric code (`1`/`2`); departures heading toward the
+  > destination of interest are the relevant ones.
+
 ### 2. `site` Favorite & Check Commands
 
 - **Check Stations:** Verify departures and disruptions for one or all saved favorite sites.
