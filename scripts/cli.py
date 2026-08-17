@@ -234,12 +234,19 @@ def cmd_site_list(args):
 
 
 def cmd_site_departures(args):
-    """Fetch departures for a specific site ID."""
+    """Fetch departures for a specific site ID.
+
+    The SL transport departures API truncates FILTERED responses server-side to a
+    small subset (~3 rows for a line+direction filter), regardless of requested
+    limits. To return the full per-line set within the API's lookahead window, we
+    fetch the unfiltered board (transport/forecast are still passed through) and
+    apply the line/direction filters locally instead.
+    """
     url = f"{TRANSPORT_API_URL}/sites/{args.site_id}/departures"
     params = {
-        "line": args.line,
+        # line/direction filters are deliberately NOT sent to the API: sending
+        # them truncates the response to ~3 rows. We filter locally below.
         "transport": args.transport,
-        "direction": args.direction,
         "forecast": args.forecast
     }
     data = make_request(url, params)
@@ -247,6 +254,14 @@ def cmd_site_departures(args):
         sys.exit(1)
 
     departures = data.get("departures", [])
+    # Apply line/direction filters client-side to avoid the API's server-side cap.
+    if args.line:
+        line_str = str(args.line)
+        departures = [d for d in departures
+                      if str(d.get("line", {}).get("designation")) == line_str]
+    if args.direction is not None:
+        departures = [d for d in departures
+                      if d.get("direction_code") == args.direction]
     if not departures:
         sys.stdout.write("No upcoming departures found.\n")
         return
