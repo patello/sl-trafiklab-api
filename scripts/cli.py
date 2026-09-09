@@ -267,7 +267,7 @@ def cmd_site_departures(args):
         return
 
     sys.stdout.write(f"Departures for site {args.site_id}:\n")
-    header = f"{'Line':<6} {'Destination':<22} {'Expected/Scheduled':<24} {'State'}"
+    header = f"{'Line':<6} {'Destination':<22} {'Expected/Scheduled':<24} {'Delay':>5} {'State'}"
     sys.stdout.write(header + "\n" + "-" * len(header) + "\n")
     for dep in departures:
         line = dep.get("line", {}).get("designation", "")
@@ -275,13 +275,36 @@ def cmd_site_departures(args):
         sched = dep.get("scheduled", "")
         expected = dep.get("expected", sched)
         state = dep.get("state", "EXPECTED")
+        delay = format_delay(sched, expected)
 
         # Format departure time display
         time_str = expected
         if dep.get("display"):
             time_str = f"{dep.get('display')} ({expected})"
 
-        sys.stdout.write(f"{line:<6} {dest:<22} {time_str:<24} {state}\n")
+        sys.stdout.write(f"{line:<6} {dest:<22} {time_str:<24} {delay:>5} {state}\n")
+
+
+def format_delay(scheduled, expected):
+    """Render departure lateness as '+4m', '0m', or 'n/a'.
+
+    ``state=EXPECTED`` only means a live real-time forecast exists — it is
+    not a punctuality verdict (a late departure is also EXPECTED, with its
+    forecast time slid later). Punctuality is the gap between the forecast
+    (``expected``) and the timetable (``scheduled``), which this helper
+    derives. Sub-minute differences count as on time.
+    """
+    if not scheduled or not expected:
+        return "n/a"
+    try:
+        sched_dt = datetime.fromisoformat(scheduled)
+        exp_dt = datetime.fromisoformat(expected)
+    except (ValueError, TypeError):
+        return "n/a"
+    delay = (exp_dt - sched_dt).total_seconds() / 60.0
+    if delay <= 0.5:
+        return "0m"
+    return f"+{int(round(delay))}m"
 
 
 def cmd_deviations(args):

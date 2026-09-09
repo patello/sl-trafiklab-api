@@ -84,6 +84,20 @@ All commands are run using Python:
   >
   > `--direction` filters by numeric code (`1`/`2`); departures heading toward the
   > destination of interest are the relevant ones.
+  >
+  > **Note — `state` vs punctuality:** The `State` column describes the data
+  > source, not punctuality. `EXPECTED` only means a live real-time forecast
+  > exists for that vehicle — a departure running minutes late is also
+  > `EXPECTED`; its forecast time simply slides later. `ATSTOP` means the
+  > vehicle is at the stop; `CANCELLED` marks a cancelled trip; departures
+  > without real-time data fall back to the timetable time. Punctuality is
+  > only visible by comparing the forecast against the timetable, which is
+  > what the `Delay` column does: `+4m` = forecast ~4 minutes past the
+  > scheduled time, `0m` = on time or early (sub-minute jitter tolerated),
+  > `n/a` = no scheduled/expected pair to compare. Timestamps with odd
+  > seconds are freshly recomputed forecasts; round-minute timestamps
+  > usually mean the timetable time without live adjustment yet. **Never
+  > read `state=EXPECTED` as "on time" — check the `Delay` column.**
 
 ### 2. `site` Favorite & Check Commands
 
