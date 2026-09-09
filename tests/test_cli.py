@@ -927,3 +927,27 @@ def test_site_departures_filtered_locally_not_capped(mock_make_request, tmp_path
     # Line 7 and the opposite-direction (direction 2) departure must be filtered out.
     assert "08:05" not in written
     assert "West" not in written
+
+
+def test_format_delay_late():
+    """A forecast past the timetable renders as +Nm."""
+    assert cli.format_delay("2026-01-01T12:00:00", "2026-01-01T12:04:00") == "+4m"
+    assert cli.format_delay("2026-01-01T12:00:00", "2026-01-01T12:15:30") == "+16m"
+
+
+def test_format_delay_on_time_and_early():
+    """Equal or early forecasts render as 0m."""
+    assert cli.format_delay("2026-01-01T12:00:00", "2026-01-01T12:00:00") == "0m"
+    assert cli.format_delay("2026-01-01T12:00:00", "2026-01-01T11:58:30") == "0m"
+
+
+def test_format_delay_missing_or_invalid():
+    """Missing or unparsable inputs render as n/a."""
+    assert cli.format_delay("", "2026-01-01T12:00:00") == "n/a"
+    assert cli.format_delay("2026-01-01T12:00:00", "") == "n/a"
+    assert cli.format_delay("not-a-time", "2026-01-01T12:00:00") == "n/a"
+
+
+def test_format_delay_sub_minute_jitter():
+    """Sub-minute jitter does not count as late."""
+    assert cli.format_delay("2026-01-01T12:00:00", "2026-01-01T12:00:30") == "0m"

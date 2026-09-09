@@ -1,2 +1,4 @@
 - docs: align SKILL.md and references/api.md CLI paths to the ClawHub-installed layout (skills/sl-trafiklab-api/scripts/cli.py) and normalize to python3
 - chore: bump version to 3.6.0
+- feat: site departures adds a Delay column (expected vs scheduled, e.g. "+4m"/"0m"/"n/a") so lateness is visible in the board output
+- docs: document that state=EXPECTED means "live forecast exists", not punctuality (SKILL.md + references/api.md), and explain the Delay column

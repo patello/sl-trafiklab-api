@@ -37,6 +37,7 @@ All actions are performed by invoking `python3 skills/sl-trafiklab-api/scripts/c
    - Command: `python3 skills/sl-trafiklab-api/scripts/cli.py site list "<query>"`
 2. **site departures**: Fetch upcoming real-time departures.
    - Command: `python3 skills/sl-trafiklab-api/scripts/cli.py site departures <site_id> [--line <line>] [--transport <mode>] [--direction <dir>] [--forecast <forecast>]`
+   - The output includes a `Delay` column (live forecast vs timetable, e.g. `+4m`/`0m`/`n/a`). `State` is a data-state, not punctuality: `EXPECTED` only means a live forecast exists — never read it as "on time"; check the `Delay` column instead.
    - `--direction` filters by numeric code (`1`/`2`). Line/direction filters are applied **locally** so the response is not truncated to the API's server-side cap (filtered requests return only a small subset, ~3 rows). The board still covers roughly the next hour; for a fuller schedule or planning use `route find`.
 3. **site check**: Check departures/disruptions for a single site or all favorite stops.
    - Command: `python3 skills/sl-trafiklab-api/scripts/cli.py site check [<site_id>] [-v]`
